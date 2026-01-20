@@ -3,14 +3,48 @@ from tkinter import ttk
 from tkinter import messagebox
 from datetime import datetime 
 import subprocess
-import shutil
 import threading
+import json
+from pathlib import Path
 
 SERVICE_NAME = "scanner-poller.service"
-
 SYSTEMCTL = "/usr/bin/systemctl"   
 SUDO      = "/usr/bin/sudo"       
+BASE_DIR = Path("/home/pi/_RunScanner")
+REGISTER_PY = BASE_DIR / "register.py"
+SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"
+LAST_REGISTER_FILE = BASE_DIR / "last_register.json"
 
+def run_register_once():
+    """Run register.py once; do not crash GUI if it fails."""
+    try:
+        subprocess.run(
+            ["/usr/bin/python3", str(REGISTER_PY)],
+            check=False,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+def read_scanner_name() -> str:
+    try:
+        return SCANNER_NAME_FILE.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+def read_register_status() -> str:
+    try:
+        j = json.loads(LAST_REGISTER_FILE.read_text(encoding="utf-8"))
+        status = j.get("status", "")
+        detail = j.get("detail", "")
+        http_code = j.get("http_code", "")
+        return f"register={status} http={http_code} {detail}".strip()
+    except Exception:
+        return "register=unknown"
+    
 def _run_systemctl(args):
     """
     Run systemctl. Try without sudo first; if that fails, retry with sudo -n.
@@ -54,29 +88,16 @@ def service_stop():
 def set_button_and_status(active: bool):
     """Update button label + status text based on active flag."""
     now_str = datetime.now().strftime("%H:%M:%S")
+
+    reg_line = f"Scanner: {scanner_name or '(unassigned)'}\n{register_status}"
+    scan_line = f"Scanning Channel since {now_str}" if active else f"Stop Scanning at {now_str}"
+
     if active:
         button01.config(text="Stop Scan")
-        show_status(f"Scanning Channel since {now_str}")
     else:
         button01.config(text="Scan Channel")
-        show_status(f"Stop Scanning at {now_str}")
 
-# root window
-root = tk.Tk()
-root.geometry("740x410")
-root.resizable(False, False)
-root.title("Wi-Fi Digital Twins")
-
-# ---- Make grid cells uniform ----
-for c in range(4):   # 4 columns
-    root.grid_columnconfigure(c, weight=1, uniform="col", minsize=185)   # 740 / 4
-for r in range(3):   # 3 rows
-    root.grid_rowconfigure(r, weight=1, uniform="row", minsize=135)     # 410 / 3
-
-# ---- Status Text in the center 2x2 block ----
-status_box = tk.Text(root, font=("Segoe UI", 14), fg="blue", wrap="word", height=6)
-status_box.grid(row=1, column=1, rowspan=2, columnspan=2, sticky="nsew")
-status_box.config(state="disabled")  # make it read-only
+    show_status(reg_line + "\n" + scan_line)
 
 # ---- Log buffer ----
 log_records = []   # will store all messages
@@ -93,6 +114,7 @@ def show_status(msg: str, log: bool = True):
     status_box.insert(tk.END, msg)
     status_box.config(state="disabled")
 
+# ---- Grid functions ----
 def function00():
     messagebox.showinfo("Information", "This is a Major Alert!")
     show_status("This is a Major Alert!")
@@ -143,6 +165,30 @@ def function20():
 
 def function23():
     show_status("Hello B23!")
+
+run_register_once()
+scanner_name = read_scanner_name()
+register_status = read_register_status()
+
+# root window
+root = tk.Tk()
+root.geometry("740x410")
+root.resizable(False, False)
+root.title("Wi-Fi Digital Twins")
+
+# ---- Make grid cells uniform ----
+for c in range(4):   # 4 columns
+    root.grid_columnconfigure(c, weight=1, uniform="col", minsize=185)   # 740 / 4
+for r in range(3):   # 3 rows
+    root.grid_rowconfigure(r, weight=1, uniform="row", minsize=135)     # 410 / 3
+
+# ---- Status Text in the center 2x2 block ----
+status_box = tk.Text(root, font=("Segoe UI", 14), fg="blue", wrap="word", height=6)
+status_box.grid(row=1, column=1, rowspan=2, columnspan=2, sticky="nsew")
+status_box.config(state="disabled")  # make it read-only
+
+# Show registration info at GUI startup
+show_status(f"Scanner: {scanner_name or '(unassigned)'}\n{register_status}", log=True)
 
 # ---- Button styles ----
 style = ttk.Style()

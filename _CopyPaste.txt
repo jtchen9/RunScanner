@@ -6,7 +6,7 @@ pi@pi:~$ python3 /home/pi/_RunScanner/build_scan_payload.py --scanner scanner1 |
 sudo apt-get update
 sudo apt-get install -y python3-requests
 
-NMS_BASE="http://192.168.137.3:8000" SCANNER="scanner1" python3 /home/pi/_RunScanner/uploader.py
+NMS_BASE="http://192.168.137.1:8000" SCANNER="scanner1" python3 /home/pi/_RunScanner/uploader.py
 
 ==============
 Create /etc/systemd/system/scanner-uploader.service
