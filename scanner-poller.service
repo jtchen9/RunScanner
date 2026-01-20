@@ -1,0 +1,19 @@
+# Copied to /etc/systemd/system
+[Unit]
+Description=Wi-Fi scanner poller (iw -> CSV/JSON)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+Environment=IFACE=wlan0
+ExecStart=/home/pi/_RunScanner/scan_wifi.sh loop
+WorkingDirectory=/home/pi/_RunScanner
+Restart=always
+RestartSec=5
+# Journald gets stdout/stderr by default
+
+[Install]
+WantedBy=multi-user.target

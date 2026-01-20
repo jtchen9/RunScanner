@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=My Tkinter App
+Comment=Start my Tkinter GUI at login
+Exec=/usr/bin/python3 /home/pi/_RunScanner/main.py
+Path=/home/pi/_RunScanner
+Terminal=false
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true

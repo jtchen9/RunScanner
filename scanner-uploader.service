@@ -1,0 +1,26 @@
+# Copied to /etc/systemd/system
+[Unit]
+Description=Wi-Fi scan uploader (Pi -> NMS /ingest)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/_RunScanner
+
+Environment="NMS_BASE=http://192.168.137.1:8000"
+Environment="SCANNER=scanner1"
+Environment="IFACE=wlan0"
+Environment="UPLOAD_INTERVAL_SEC=60"
+
+ExecStart=/usr/bin/python3 /home/pi/_RunScanner/uploader.py
+Restart=always
+RestartSec=3
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
