@@ -1,0 +1,16 @@
+# Copied to /etc/systemd/system/scanner-agent.service
+[Unit]
+Description=Scanner agent (Pi polls NMS commands and ACKs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/_RunScanner
+ExecStart=/usr/bin/python3 /home/pi/_RunScanner/agent.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

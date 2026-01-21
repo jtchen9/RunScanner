@@ -1,0 +1,16 @@
+# Copied to /etc/systemd/system/scanner=uploader.service
+[Unit]
+Description=Wi-Fi scan uploader (Pi -> NMS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/_RunScanner
+ExecStart=/usr/bin/python3 /home/pi/_RunScanner/uploader.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

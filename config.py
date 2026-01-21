@@ -2,36 +2,91 @@
 """
 Shared config for _RunScanner.
 
-Goal: avoid duplicating NMS_BASE and other common settings across scripts/services.
+Single source of truth for:
+- NMS discovery
+- common paths
 """
 
 import os
+import json
+import socket
+import requests
 from pathlib import Path
+from typing import Optional
 
 BASE_DIR = Path("/home/pi/_RunScanner")
 
-# ---- NMS ----
-# Environment variable overrides are always allowed.
-NMS_BASE_DEFAULT = "http://192.168.137.3:8000"
+# ------------------------------------------------------------------
+# NMS discovery
+# ------------------------------------------------------------------
 
-def get_nms_base() -> str:
+# Ordered preference list
+NMS_CANDIDATES = [
+    "http://192.168.137.3:8000",  # primary (normal lab)
+    "http://192.168.137.1:8000",  # fallback (dev / laptop)
+]
+
+NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
+NMS_TIMEOUT_SEC = 3
+
+
+def _probe_nms(base: str) -> bool:
+    """Return True if NMS /health responds."""
+    try:
+        r = requests.get(f"{base}/health", timeout=NMS_TIMEOUT_SEC)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def discover_nms_base(force: bool = False) -> Optional[str]:
     """
-    Return NMS base URL.
-    Priority:
-      1) env NMS_BASE
-      2) NMS_BASE_DEFAULT
+    Discover reachable NMS and cache it.
     """
-    return (os.getenv("NMS_BASE", NMS_BASE_DEFAULT) or NMS_BASE_DEFAULT).strip().rstrip("/")
+    if not force and NMS_CACHE_FILE.exists():
+        cached = NMS_CACHE_FILE.read_text().strip()
+        if cached and _probe_nms(cached):
+            return cached
+
+    for base in NMS_CANDIDATES:
+        if _probe_nms(base):
+            NMS_CACHE_FILE.write_text(base)
+            return base
+
+    return None
 
 
-# ---- Registration ----
-REG_IFACE_DEFAULT = "wlan0"
+def get_nms_base() -> Optional[str]:
+    """
+    Return active NMS base URL, or None if unavailable.
+    """
+    return discover_nms_base(force=False)
 
-def get_reg_iface() -> str:
-    return (os.getenv("REG_IFACE", REG_IFACE_DEFAULT) or REG_IFACE_DEFAULT).strip()
 
+# ------------------------------------------------------------------
+# Registration / identity
+# ------------------------------------------------------------------
 
-# ---- Common state files ----
 SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"
 LAST_REGISTER_FILE = BASE_DIR / "last_register.json"
+
+REG_IFACE_DEFAULT = "wlan0"
+
+
+def get_reg_iface() -> str:
+    return os.getenv("REG_IFACE", REG_IFACE_DEFAULT)
+
+
+def get_mac_address(iface: str) -> str:
+    try:
+        with open(f"/sys/class/net/{iface}/address") as f:
+            return f.read().strip().lower()
+    except Exception:
+        return ""
+
+
+# ------------------------------------------------------------------
+# Scan data
+# ------------------------------------------------------------------
+
 LATEST_JSON_FILE = Path("/tmp/latest_scan.json")

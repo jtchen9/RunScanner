@@ -37,8 +37,23 @@ We will append/update this file as new abilities are added.
 
 ---
 
-## NMS (remote) commands
-(Empty for now — will be filled starting Step 4 when we add NMS command polling.)
+### NMS.CMD.SCAN.START
+**Purpose:** Start periodic Wi-Fi scanning on Pi.  
+**Trigger:** NMS issues command with execute_at <= now.  
+**Pi implementation:** systemctl start scanner-poller.service  
+**Observable:** `scanner-poller.service` active; scan files updating.
+
+### NMS.CMD.SCAN.STOP
+**Purpose:** Stop periodic Wi-Fi scanning.  
+**Trigger:** NMS command.  
+**Pi implementation:** systemctl stop scanner-poller.service  
+**Observable:** service inactive; no new scan files.
+
+### NMS.CMD.SCAN.ONCE
+**Purpose:** Perform a single Wi-Fi scan immediately.  
+**Trigger:** NMS command.  
+**Pi implementation:** run `scan_wifi.sh once`.  
+**Observable:** `/tmp/latest_scan.json` updated once.
 
 ---
 

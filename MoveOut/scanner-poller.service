@@ -1,4 +1,4 @@
-# Copied to /etc/systemd/system
+# Copied to /etc/systemd/system/scanner-poller.service
 [Unit]
 Description=Wi-Fi scanner poller (iw -> CSV/JSON)
 After=network-online.target
