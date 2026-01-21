@@ -88,8 +88,7 @@ def main() -> int:
     body = {
         "mac": mac,
         "ip": ip or None,
-        "scanner_version": None,
-        "bundle_version": get_bundle_version(), 
+        "scanner_version": get_bundle_version(), 
         "capabilities": "scan",
     }
 
