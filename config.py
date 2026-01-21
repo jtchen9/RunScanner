@@ -28,7 +28,19 @@ NMS_CANDIDATES = [
 
 NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
 NMS_TIMEOUT_SEC = 3
+BUNDLES_DIR = BASE_DIR / "bundles"
+ACTIVE_BUNDLE_FILE = BUNDLES_DIR / "active_bundle.txt"  # written by bundle_manager.py
 
+def get_bundle_version() -> str:
+    """
+    Return current bundle version/id.
+    "0" means: new Pi / no bundle applied.
+    """
+    try:
+        s = ACTIVE_BUNDLE_FILE.read_text(encoding="utf-8").strip()
+        return s if s else "0"
+    except Exception:
+        return "0"
 
 def _probe_nms(base: str) -> bool:
     """Return True if NMS /health responds."""

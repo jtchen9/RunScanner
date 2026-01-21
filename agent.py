@@ -18,6 +18,7 @@ import json
 import subprocess
 from datetime import datetime, timezone
 from typing import Any, Dict, Tuple, List
+from bundle_manager import apply_bundle
 
 import requests
 
@@ -192,8 +193,15 @@ def dispatch(cmd_fields: Dict[str, Any]) -> Tuple[str, str]:
         ok, detail = exec_scan_once()
         return ("ok" if ok else "error"), detail
 
-    if action.startswith("bundle."):
-        return "error", f"bundle action not implemented yet: {action}"
+    if action == "bundle.apply":
+        bundle_id = (cmd_fields.get("bundle_id") or "").strip()
+        url = (cmd_fields.get("url") or "").strip()
+
+        if not bundle_id or not url:
+            return "error", "missing bundle_id or url"
+
+        ok, detail = apply_bundle(bundle_id, url)
+        return ("ok" if ok else "error"), detail
 
     return "error", f"unknown action={action}"
 

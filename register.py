@@ -11,6 +11,7 @@ from config import (
     BASE_DIR,
     get_nms_base,
     get_reg_iface,
+    get_bundle_version,
     get_mac_address,
     SCANNER_NAME_FILE,
     LAST_REGISTER_FILE,
@@ -88,6 +89,7 @@ def main() -> int:
         "mac": mac,
         "ip": ip or None,
         "scanner_version": None,
+        "bundle_version": get_bundle_version(), 
         "capabilities": "scan",
     }
 

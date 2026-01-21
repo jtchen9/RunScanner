@@ -1,0 +1,9 @@
+{
+  "ts_utc": "2026-01-21T06:03:54.852359+00:00",
+  "status": "ok",
+  "detail": "registered via http://192.168.137.1:8000",
+  "http_code": 200,
+  "scanner": "scanner01",
+  "mac": "2c:cf:67:d0:67:f3",
+  "ip": "192.168.137.2"
+}
