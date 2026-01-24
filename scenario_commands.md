@@ -18,6 +18,9 @@ We will append/update this file as new abilities are added.
 **NMS APIs:**
 - `POST /registry/register` (body: mac, ip?, scanner_version?, capabilities?)
 
+scanner_version reports bundle version from bundles/active_bundle.txt
+Pi does not decide upgrades
+
 ---
 
 ### LOCAL.GUI.START
@@ -102,7 +105,8 @@ We will append/update this file as new abilities are added.
 **Pi implementation:** `bundle_manager.apply_bundle()`  
 **Args (args_json):**
 ```json
-{
-  "bundle_id": "wifi-exp@1.2.0",
-  "url": "http://<nms>/bundles/wifi-exp@1.2.0.zip"
-}
+{"bundle_id": "robotBundle1.1"}
+bundle_id must match Windows-safe format robotBundleX.Y
+Note: current Pi agent expects bundle_id and url as top-level command fields (not nested in args_json)
+Pi reports via: POST /bootstrap/report/{scanner}
+

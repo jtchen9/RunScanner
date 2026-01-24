@@ -33,14 +33,18 @@ ACTIVE_BUNDLE_FILE = BUNDLES_DIR / "active_bundle.txt"  # written by bundle_mana
 
 def get_bundle_version() -> str:
     """
-    Return current bundle version/id.
-    "0" means: new Pi / no bundle applied.
+    Return current bundle version/id from bundles/active_bundle.txt.
+
+    Operational policy:
+    - SD-clone image should ship with a valid version like "robotBundle1.0".
+    - "0" is reserved as a fallback meaning: unknown/uninitialized (should be rare).
     """
     try:
         s = ACTIVE_BUNDLE_FILE.read_text(encoding="utf-8").strip()
         return s if s else "0"
     except Exception:
         return "0"
+
 
 def _probe_nms(base: str) -> bool:
     """Return True if NMS /health responds."""

@@ -49,7 +49,7 @@ def read_scanner_name() -> str:
 
 
 def build_payload(scanner: str):
-    from build_scan_payload import build_payload as _build
+    from scan_payload import build_payload as _build
     return _build(scanner, IFACE)
 
 

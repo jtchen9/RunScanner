@@ -172,7 +172,7 @@ def parse_args_json(s: str) -> Dict[str, Any]:
         return {}
 
 
-def dispatch(cmd_fields: Dict[str, Any]) -> Tuple[str, str]:
+def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[str, str]:
     """Execute one command. Returns (status, detail) where status in {'ok','error'}."""
     category = (cmd_fields.get("category") or "").strip()
     action = (cmd_fields.get("action") or "").strip()
@@ -194,16 +194,42 @@ def dispatch(cmd_fields: Dict[str, Any]) -> Tuple[str, str]:
         return ("ok" if ok else "error"), detail
 
     if action == "bundle.apply":
-        bundle_id = (cmd_fields.get("bundle_id") or "").strip()
-        url = (cmd_fields.get("url") or "").strip()
+        bundle_id = (_args.get("bundle_id") or "").strip()
+        if not bundle_id:
+            bundle_id = (cmd_fields.get("bundle_id") or "").strip()
+        if not bundle_id:
+            return "error", "missing bundle_id"
 
-        if not bundle_id or not url:
-            return "error", "missing bundle_id or url"
+        ok, detail, prev = apply_bundle(nms_base, bundle_id)
+        status = "ok" if ok else "error"
 
-        ok, detail = apply_bundle(bundle_id, url)
-        return ("ok" if ok else "error"), detail
+        report_bundle_result(nms_base, scanner, bundle_id, prev, status, detail)
+        return status, detail
 
     return "error", f"unknown action={action}"
+
+
+def report_bundle_result(nms_base: str, scanner: str, bundle_id: str, prev_bundle_id: str,
+                         status: str, detail: str) -> None:
+    """
+    Best-effort report to NMS bundle management endpoint.
+    Does not replace /cmd/ack; it's for bundle tracking.
+    """
+    url = f"{nms_base}/bootstrap/report/{scanner}"
+    body = {
+        "scanner": scanner,
+        "bundle_id": bundle_id,
+        "prev_bundle_id": prev_bundle_id,
+        "status": status,   # ok | error
+        "detail": detail,
+        "ts_utc": utc_iso(),
+    }
+    try:
+        r = requests.post(url, json=body, timeout=HTTP_TIMEOUT_SEC)
+        if r.status_code != 200:
+            log(f"BOOTSTRAP report fail http={r.status_code} body={r.text[:200]}")
+    except Exception as e:
+        log(f"BOOTSTRAP report exception: {type(e).__name__}: {e}")
 
 
 def main() -> None:
@@ -259,7 +285,7 @@ def main() -> None:
 
             log(f"EXEC cmd_id={cmd_id} action={action} execute_at={execute_at} xid={xid}")
 
-            status, detail = dispatch(fields)
+            status, detail = dispatch(nms_base, scanner, fields)
             log(f"RESULT cmd_id={cmd_id} status={status} detail={detail}")
 
             ack_command(nms_base, scanner, cmd_id, status, detail)

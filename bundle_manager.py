@@ -4,17 +4,16 @@ Bundle manager (Pi-side, production).
 
 Responsibilities:
 - Stop running services (highest priority)
-- Download bundle ZIP from NMS
+- Download bundle ZIP from NMS: GET /bootstrap/bundle/{bundle_id}
 - Extract into bundles/{bundle_id}
 - Switch active symlink
+- Write active_bundle.txt (sole source of truth)
 - Run install hook (optional)
 - Restart uploader service
 
 No rollback. No version arbitration. Pi is dumb by design.
 """
 
-import os
-import shutil
 import subprocess
 import zipfile
 from pathlib import Path
@@ -25,6 +24,7 @@ import requests
 BASE_DIR = Path("/home/pi/_RunScanner")
 BUNDLES_DIR = BASE_DIR / "bundles"
 ACTIVE_LINK = BUNDLES_DIR / "active"
+ACTIVE_BUNDLE_FILE = BUNDLES_DIR / "active_bundle.txt"
 
 SYSTEMCTL = "/usr/bin/systemctl"
 SUDO = "/usr/bin/sudo"
@@ -32,7 +32,7 @@ SUDO = "/usr/bin/sudo"
 SERVICE_SCAN = "scanner-poller.service"
 SERVICE_UPLOADER = "scanner-uploader.service"
 
-HTTP_TIMEOUT = 20
+HTTP_TIMEOUT = 30
 
 
 def _run(cmd, timeout=30) -> Tuple[bool, str]:
@@ -50,6 +50,7 @@ def _run(cmd, timeout=30) -> Tuple[bool, str]:
 
 
 def _systemctl(action: str, service: str) -> None:
+    # best-effort; try normal then sudo -n
     _run([SYSTEMCTL, action, service])
     _run([SUDO, "-n", SYSTEMCTL, action, service])
 
@@ -63,7 +64,8 @@ def restart_uploader() -> None:
     _systemctl("restart", SERVICE_UPLOADER)
 
 
-def download_bundle(url: str, dst_zip: Path) -> None:
+def _download_bundle(nms_base: str, bundle_id: str, dst_zip: Path) -> None:
+    url = f"{nms_base}/bootstrap/bundle/{bundle_id}"
     r = requests.get(url, stream=True, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     with dst_zip.open("wb") as f:
@@ -72,27 +74,36 @@ def download_bundle(url: str, dst_zip: Path) -> None:
                 f.write(chunk)
 
 
-def extract_zip(src_zip: Path, dst_dir: Path) -> None:
+def _extract_zip(src_zip: Path, dst_dir: Path) -> None:
     with zipfile.ZipFile(src_zip, "r") as zf:
         zf.extractall(dst_dir)
 
 
-def run_install_hook(bundle_dir: Path) -> None:
+def _run_install_hook(bundle_dir: Path) -> None:
     hook = bundle_dir / "install.sh"
     if not hook.exists():
         return
 
     hook.chmod(0o755)
-    ok, out = _run(["/usr/bin/bash", str(hook)], timeout=120)
+    ok, out = _run(["/usr/bin/bash", str(hook)], timeout=180)
     if not ok:
         raise RuntimeError(f"install.sh failed: {out}")
 
 
-def apply_bundle(bundle_id: str, url: str) -> Tuple[bool, str]:
+def _read_prev_bundle_id() -> str:
+    try:
+        s = ACTIVE_BUNDLE_FILE.read_text(encoding="utf-8").strip()
+        return s if s else "0"
+    except Exception:
+        return "0"
+
+
+def apply_bundle(nms_base: str, bundle_id: str) -> Tuple[bool, str, str]:
     """
     Main entry.
-    Returns (ok, detail).
+    Returns (ok, detail, prev_bundle_id)
     """
+    prev = _read_prev_bundle_id()
 
     try:
         BUNDLES_DIR.mkdir(parents=True, exist_ok=True)
@@ -105,29 +116,29 @@ def apply_bundle(bundle_id: str, url: str) -> Tuple[bool, str]:
         if tmp_zip.exists():
             tmp_zip.unlink()
 
-        download_bundle(url, tmp_zip)
+        _download_bundle(nms_base, bundle_id, tmp_zip)
 
         # 3) Extract
         bundle_dir = BUNDLES_DIR / bundle_id
         if bundle_dir.exists():
-            return False, f"bundle already exists: {bundle_id}"
+            return False, f"bundle already exists: {bundle_id}", prev
 
-        extract_zip(tmp_zip, bundle_dir)
+        _extract_zip(tmp_zip, bundle_dir)
 
         # 4) Activate (atomic)
         if ACTIVE_LINK.exists() or ACTIVE_LINK.is_symlink():
             ACTIVE_LINK.unlink()
         ACTIVE_LINK.symlink_to(bundle_dir)
 
-        (BUNDLES_DIR / "active_bundle.txt").write_text(bundle_id + "\n")
+        ACTIVE_BUNDLE_FILE.write_text(bundle_id + "\n", encoding="utf-8")
 
         # 5) Install hook
-        run_install_hook(bundle_dir)
+        _run_install_hook(bundle_dir)
 
         # 6) Restart uploader only
         restart_uploader()
 
-        return True, f"bundle applied: {bundle_id}"
+        return True, f"bundle applied: {bundle_id}", prev
 
     except Exception as e:
-        return False, f"bundle apply failed: {type(e).__name__}: {e}"
+        return False, f"bundle apply failed: {type(e).__name__}: {e}", prev
