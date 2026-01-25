@@ -119,30 +119,23 @@ def admin_reset_best_effort() -> None:
     """
     POST /admin/_reset.
 
-    We don't assume the exact request schema; we try a few safe payloads.
-    If all fail, warn but continue.
+    Operator-only API.
+    Requires explicit confirmation to prevent accidental data loss.
     """
-    candidates = [
-        None,  # no body
-        {},
-        {"preserve_whitelist": True, "preserve_bundle_index": True, "preserve_autoflush": True},
-        {"keep_whitelist": True, "keep_bundles": True, "keep_autoflush": True},
-        {"preserve": {"whitelist": True, "bundles": True, "autoflush": True}},
-    ]
-    for body in candidates:
-        try:
-            if body is None:
-                r = req("POST", "/admin/_reset")
-            else:
-                r = req("POST", "/admin/_reset", json=body)
-            ok_or_dump(r)
-            if r.status_code == 200:
-                print("[OK] admin reset succeeded")
-                return
-        except Exception as e:
-            print(f"[WARN] admin reset attempt exception: {type(e).__name__}: {e}")
+    body = {
+        "confirm": "RESET",
+        "keep_whitelist": True,
+        "keep_bundles": True,
+        "keep_autoflush_flag": True,
+    }
 
-    print("[WARN] /admin/_reset did not succeed with tested payloads. Continuing anyway.")
+    r = req("POST", "/admin/_reset", json=body)
+    ok_or_dump(r)
+
+    if r.status_code != 200:
+        die("/admin/_reset failed (expected 200 OK)")
+
+    print("[OK] admin reset succeeded")
 
 def get_health() -> Dict[str, Any]:
     r = req("GET", "/health")
@@ -282,13 +275,17 @@ def build_bundle_zip_from_dir(src_dir: str, bundle_id: str) -> str:
     Create a zip file:
       ZIP contains a top-level folder named {bundle_id}/...
 
-    Returns created zip path.
+    The zip is stored in /home/pi/_RunScanner/bundles
+    so it can be reused later.
     """
     src = Path(src_dir)
     if not src.exists() or not src.is_dir():
         die(f"BUNDLE_SRC_DIR not a directory: {src}")
 
-    out_zip = Path.cwd() / f"{bundle_id}.zip"
+    bundle_store = Path("/home/pi/_RunScanner/bundles")
+    bundle_store.mkdir(parents=True, exist_ok=True)
+
+    out_zip = bundle_store / f"{bundle_id}.zip"
     if out_zip.exists():
         out_zip.unlink()
 
@@ -300,7 +297,7 @@ def build_bundle_zip_from_dir(src_dir: str, bundle_id: str) -> str:
         for name in BUNDLE_FILES:
             p = src / name
             if not p.exists():
-                continue  # allow install.sh missing
+                continue
             arcname = f"{bundle_id}/{name}"
             zf.write(p, arcname=arcname)
 
@@ -446,8 +443,8 @@ if __name__ == "__main__":
 
     # If you want the script to build zip automatically, set BUNDLE_SRC_DIR to a folder.
     # Or set BUNDLE_ZIP_PATH to an existing zip. Leaving both empty means: skip upload, still test download/report.
-    BUNDLE_SRC_DIR = ""      # e.g. r"D:\_Action\_RunScanner_current"
-    BUNDLE_ZIP_PATH = ""     # e.g. r"D:\_Action\_RunScanner_current\robotBundle1.0.zip"
+    BUNDLE_SRC_DIR = "/home/pi/_RunScanner"      
+    BUNDLE_ZIP_PATH = ""     
 
     DO_COMMAND_TEST = True
     CMD_ACTION = "scan.once"

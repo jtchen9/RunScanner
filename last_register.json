@@ -1,0 +1,10 @@
+{
+  "time": "2026-01-25-19:22:43",
+  "status": "ok",
+  "detail": "registered via http://192.168.137.1:8000",
+  "http_code": 200,
+  "scanner": "scanner02",
+  "mac": "2c:cf:67:3f:7b:51",
+  "ip": "192.168.137.2",
+  "time_format": "%Y-%m-%d-%H:%M:%S"
+}
