@@ -26,6 +26,7 @@ import json
 import time
 import hashlib
 import zipfile
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -324,85 +325,95 @@ def resolve_bundle_zip_path() -> Optional[str]:
 
     return None
 
+def _run_sh(path: Path) -> None:
+    subprocess.run(
+        ["/usr/bin/bash", str(path)],
+        check=False,
+        capture_output=False,   # show output live
+        text=True,
+    )
 
 # =============================================================================
 # Main flow
 # =============================================================================
 
-def main() -> int:
-    if not _is_valid_mac(WL_MAC01) or not _is_valid_mac(WL_MAC02) or not _is_valid_mac(TEST_MAC):
-        die("MAC format invalid. Expected like 2c:cf:67:...")
+def main() -> int:   
+    _run_sh(ENTER_SH)
+    try:
+        if not _is_valid_mac(WL_MAC01) or not _is_valid_mac(WL_MAC02) or not _is_valid_mac(TEST_MAC):
+            die("MAC format invalid. Expected like 2c:cf:67:...")
 
-    pause(f"STEP 0: POST /admin/_reset (operator-only)  NMS_BASE={NMS_BASE}")
-    admin_reset_best_effort()
+        pause(f"STEP 0: POST /admin/_reset (operator-only)  NMS_BASE={NMS_BASE}")
+        admin_reset_best_effort()
 
-    pause("STEP 1: GET /health (Pi-facing)")
-    health = get_health()
-    server_now = health.get("time")
-    time_fmt = health.get("time_format")
-    print(f"[INFO] server_now={server_now} time_format={time_fmt}")
-    if not isinstance(server_now, str) or not server_now:
-        die("health missing 'time'")
+        pause("STEP 1: GET /health (Pi-facing)")
+        health = get_health()
+        server_now = health.get("time")
+        time_fmt = health.get("time_format")
+        print(f"[INFO] server_now={server_now} time_format={time_fmt}")
+        if not isinstance(server_now, str) or not server_now:
+            die("health missing 'time'")
 
-    pause("STEP 2: POST /registry/_whitelist_upsert (operator-only)  (upsert BOTH known MACs)")
-    op_whitelist_upsert_two()
+        pause("STEP 2: POST /registry/_whitelist_upsert (operator-only)  (upsert BOTH known MACs)")
+        op_whitelist_upsert_two()
 
-    pause("STEP 3: POST /registry/register (Pi-facing) using TEST_MAC")
-    assigned = pi_register(TEST_MAC, TEST_IP, scanner_version=BUNDLE_ID)
-    print(f"[OK] register assigned scanner={assigned}")
-    if assigned != TEST_SCANNER:
-        print(f"[WARN] assigned scanner differs from TEST_SCANNER: expected={TEST_SCANNER} got={assigned}")
+        pause("STEP 3: POST /registry/register (Pi-facing) using TEST_MAC")
+        assigned = pi_register(TEST_MAC, TEST_IP, scanner_version=BUNDLE_ID)
+        print(f"[OK] register assigned scanner={assigned}")
+        if assigned != TEST_SCANNER:
+            print(f"[WARN] assigned scanner differs from TEST_SCANNER: expected={TEST_SCANNER} got={assigned}")
 
-    pause("STEP 4: POST /ingest/{scanner} (Pi-facing) with opaque bytes")
-    payload_obj = {
-        "scanner": assigned,
-        "time": server_now,  # opaque for NMS
-        "note": f"one-shot test payload ({BUNDLE_ID})",
-        "entries": [{"bssid": "00:11:22:33:44:55", "ssid": "TEST", "freq": 2412, "signal": -45.0}],
-    }
-    ingest = pi_ingest(assigned, payload_obj)
-    print(f"[OK] ingest queued_in={ingest.get('queued_in')} bytes={ingest.get('bytes')} sha256={ingest.get('sha256')}")
+        pause("STEP 4: POST /ingest/{scanner} (Pi-facing) with opaque bytes")
+        payload_obj = {
+            "scanner": assigned,
+            "time": server_now,  # opaque for NMS
+            "note": f"one-shot test payload ({BUNDLE_ID})",
+            "entries": [{"bssid": "00:11:22:33:44:55", "ssid": "TEST", "freq": 2412, "signal": -45.0}],
+        }
+        ingest = pi_ingest(assigned, payload_obj)
+        print(f"[OK] ingest queued_in={ingest.get('queued_in')} bytes={ingest.get('bytes')} sha256={ingest.get('sha256')}")
 
-    if DO_BUNDLE_TEST:
-        pause("STEP 5: Bundle upload (operator-only) POST /bootstrap/_bundle  (build zip if configured)")
-        zip_path = resolve_bundle_zip_path()
-        if zip_path:
-            op_bundle_upload(BUNDLE_ID, zip_path)
-        else:
-            print("[WARN] No BUNDLE_ZIP_PATH and no BUNDLE_SRC_DIR. Skipping upload step.")
+        if DO_BUNDLE_TEST:
+            pause("STEP 5: Bundle upload (operator-only) POST /bootstrap/_bundle  (build zip if configured)")
+            zip_path = resolve_bundle_zip_path()
+            if zip_path:
+                op_bundle_upload(BUNDLE_ID, zip_path)
+            else:
+                print("[WARN] No BUNDLE_ZIP_PATH and no BUNDLE_SRC_DIR. Skipping upload step.")
 
-        pause("STEP 6: Bundle download (Pi-facing) GET /bootstrap/bundle/{bundle_id}")
-        _ = pi_bundle_download(BUNDLE_ID)
+            pause("STEP 6: Bundle download (Pi-facing) GET /bootstrap/bundle/{bundle_id}")
+            _ = pi_bundle_download(BUNDLE_ID)
 
-        pause("STEP 7: Bundle telemetry (Pi-facing) POST /bootstrap/report/{scanner}")
-        _ = pi_bootstrap_report(assigned, BUNDLE_ID)
+            pause("STEP 7: Bundle telemetry (Pi-facing) POST /bootstrap/report/{scanner}")
+            _ = pi_bootstrap_report(assigned, BUNDLE_ID)
 
-    if DO_COMMAND_TEST:
-        pause("STEP 8: Enqueue one due command (operator-only) POST /cmd/_enqueue/{scanner}")
-        cmd_id = op_cmd_enqueue(
-            scanner=assigned,
-            execute_at=server_now,      # guarantee due
-            category="scan",
-            action=CMD_ACTION,
-            args_json_text=CMD_ARGS_JSON,
-        )
-        print(f"[OK] enqueued cmd_id={cmd_id} action={CMD_ACTION} args={CMD_ARGS_JSON}")
+        if DO_COMMAND_TEST:
+            pause("STEP 8: Enqueue one due command (operator-only) POST /cmd/_enqueue/{scanner}")
+            cmd_id = op_cmd_enqueue(
+                scanner=assigned,
+                execute_at=server_now,      # guarantee due
+                category="scan",
+                action=CMD_ACTION,
+                args_json_text=CMD_ARGS_JSON,
+            )
+            print(f"[OK] enqueued cmd_id={cmd_id} action={CMD_ACTION} args={CMD_ARGS_JSON}")
 
-        pause("STEP 9: Poll commands (Pi-facing) GET /cmd/poll/{scanner}")
-        poll = pi_cmd_poll(assigned, limit=10)
-        cmds = poll.get("commands") or []
-        if not cmds:
-            die("poll returned no commands (expected >=1).")
-        xid, fields = cmds[0]
-        got_cmd_id = (fields or {}).get("cmd_id") or cmd_id
-        print(f"[OK] poll returned xid={xid} cmd_id={got_cmd_id}")
+            pause("STEP 9: Poll commands (Pi-facing) GET /cmd/poll/{scanner}")
+            poll = pi_cmd_poll(assigned, limit=10)
+            cmds = poll.get("commands") or []
+            if not cmds:
+                die("poll returned no commands (expected >=1).")
+            xid, fields = cmds[0]
+            got_cmd_id = (fields or {}).get("cmd_id") or cmd_id
+            print(f"[OK] poll returned xid={xid} cmd_id={got_cmd_id}")
 
-        pause("STEP 10: ACK command (Pi-facing) POST /cmd/ack/{scanner}")
-        _ = pi_cmd_ack(assigned, got_cmd_id)
+            pause("STEP 10: ACK command (Pi-facing) POST /cmd/ack/{scanner}")
+            _ = pi_cmd_ack(assigned, got_cmd_id)
 
-    pause("DONE: All selected Pi-facing APIs exercised.")
-    return 0
-
+        pause("DONE: All selected Pi-facing APIs exercised.")
+        return 0
+    finally:
+        _run_sh(EXIT_SH)
 
 if __name__ == "__main__":
     # -------------------------------------------------------------------------
@@ -416,14 +427,18 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
     # Fixed defaults (do NOT change unless you intend to change the test)
     # -------------------------------------------------------------------------
-    NMS_BASE = "http://192.168.137.3:8000"
+    NMS_BASE = "http://192.168.137.1:8000"
+
+    TEST_DIR = Path("/home/pi/_RunScanner/TestCodes")
+    ENTER_SH = TEST_DIR / "enter_test_mode.sh"
+    EXIT_SH  = TEST_DIR / "exit_test_mode.sh"
 
     WL_SCANNER01 = "scanner01"
     WL_MAC01 = "2c:cf:67:d0:67:f3"
 
     WL_SCANNER02 = "scanner02"
     WL_MAC02 = "2c:cf:67:3f:7b:51"
-
+    
     TEST_IP = "192.168.137.2"   # fixed as requested
 
     DO_BUNDLE_TEST = True
@@ -440,8 +455,4 @@ if __name__ == "__main__":
 
     HTTP_TIMEOUT = 12.0
 
-    try:
-        sys.exit(main())
-    except KeyboardInterrupt:
-        print("\n[STOP] KeyboardInterrupt")
-        sys.exit(130)
+    raise SystemExit(main())

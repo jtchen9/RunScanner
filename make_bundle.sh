@@ -90,10 +90,10 @@ REQUIRED_BUNDLE_FILES=(
 KEEP_RUNTIME_FILES=(
   bundles
   make_bundle.sh
-  nms_one_shot_test.py
   MoveOut
   nms_base.txt
   scanner_name.txt
+  TestCodes
 )
 
 echo "[install.sh] Verifying bundle contents..."
