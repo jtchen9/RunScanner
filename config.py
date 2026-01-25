@@ -5,16 +5,29 @@ Shared config for _RunScanner.
 Single source of truth for:
 - NMS discovery
 - common paths
+- time format helpers
 """
 
 import os
-import json
-import socket
 import requests
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 BASE_DIR = Path("/home/pi/_RunScanner")
+
+# ------------------------------------------------------------------
+# Time (MUST match NMS)
+# ------------------------------------------------------------------
+
+# ONE official time format everywhere (Pi <-> NMS)
+TIME_FMT: str = "%Y-%m-%d-%H:%M:%S"
+
+
+def local_ts() -> str:
+    """Return current local time string in TIME_FMT."""
+    return datetime.now().strftime(TIME_FMT)
+
 
 # ------------------------------------------------------------------
 # NMS discovery
@@ -28,8 +41,10 @@ NMS_CANDIDATES = [
 
 NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
 NMS_TIMEOUT_SEC = 3
+
 BUNDLES_DIR = BASE_DIR / "bundles"
 ACTIVE_BUNDLE_FILE = BUNDLES_DIR / "active_bundle.txt"  # written by bundle_manager.py
+
 
 def get_bundle_version() -> str:
     """
@@ -58,6 +73,10 @@ def _probe_nms(base: str) -> bool:
 def discover_nms_base(force: bool = False) -> Optional[str]:
     """
     Discover reachable NMS and cache it.
+
+    Priority:
+    1) cached value (if still alive)
+    2) ordered NMS_CANDIDATES probe
     """
     if not force and NMS_CACHE_FILE.exists():
         cached = NMS_CACHE_FILE.read_text().strip()
@@ -66,16 +85,17 @@ def discover_nms_base(force: bool = False) -> Optional[str]:
 
     for base in NMS_CANDIDATES:
         if _probe_nms(base):
-            NMS_CACHE_FILE.write_text(base)
+            try:
+                NMS_CACHE_FILE.write_text(base, encoding="utf-8")
+            except Exception:
+                pass
             return base
 
     return None
 
 
 def get_nms_base() -> Optional[str]:
-    """
-    Return active NMS base URL, or None if unavailable.
-    """
+    """Return active NMS base URL, or None if unavailable."""
     return discover_nms_base(force=False)
 
 

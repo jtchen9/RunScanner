@@ -2,30 +2,34 @@
 """
 scanner agent (headless): polls NMS for commands, executes, and ACKs.
 
-Step 3 scope:
+Scope:
 - Identity: read scanner_name.txt; if missing, run register.py and retry.
 - NMS discovery: via config.get_nms_base() (failover + caching).
 - Poll: GET /cmd/poll/{scanner}
-- Execute: scan.start / scan.stop / scan.once
+- Execute: scan.start / scan.stop / scan.once / bundle.apply
 - Ack: POST /cmd/ack/{scanner}
+- Bundle telemetry: POST /bootstrap/report/{scanner}  (installed_version only)
 
-Future: add robot/video/audio actions via the same dispatch table.
+Notes:
+- Time format MUST match NMS TIME_FMT (local time)
+- args_json is JSON text stored in Redis; parse as dict for actions
 """
 
 import os
 import time
 import json
 import subprocess
-from datetime import datetime, timezone
 from typing import Any, Dict, Tuple, List
-from bundle_manager import apply_bundle
 
 import requests
+
+from bundle_manager import apply_bundle
 
 from config import (
     BASE_DIR,
     get_nms_base,
     SCANNER_NAME_FILE,
+    local_ts,
 )
 
 REGISTER_PY = BASE_DIR / "register.py"
@@ -44,12 +48,8 @@ REGISTER_RETRY_SEC = int(os.getenv("REGISTER_RETRY_SEC", "10"))
 OFFLINE_RETRY_SEC = int(os.getenv("OFFLINE_RETRY_SEC", "5"))
 
 
-def utc_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def log(msg: str) -> None:
-    line = f"[{utc_iso()}] {msg}"
+    line = f"[{local_ts()}] {msg}"
     print(line, flush=True)
     try:
         with LOG_PATH.open("a", encoding="utf-8") as f:
@@ -152,7 +152,7 @@ def ack_command(nms_base: str, scanner: str, cmd_id: str, status: str, detail: s
         "cmd_id": cmd_id,
         "status": status,
         "detail": detail,
-        "finished_at": utc_iso(),
+        "finished_at": local_ts(),  # MUST match TIME_FMT
     }
     try:
         r = requests.post(url, json=body, timeout=HTTP_TIMEOUT_SEC)
@@ -163,6 +163,7 @@ def ack_command(nms_base: str, scanner: str, cmd_id: str, status: str, detail: s
 
 
 def parse_args_json(s: str) -> Dict[str, Any]:
+    """NMS stores args_json as JSON text. Pi parses it into dict."""
     if not s:
         return {}
     try:
@@ -172,12 +173,34 @@ def parse_args_json(s: str) -> Dict[str, Any]:
         return {}
 
 
+def report_installed_bundle(nms_base: str, scanner: str, installed_version: str) -> None:
+    """
+    Best-effort bundle telemetry to NMS.
+
+    NMS contract:
+      POST /bootstrap/report/{scanner}
+      body: {"installed_version": "<bundle_id>"}
+    """
+    url = f"{nms_base}/bootstrap/report/{scanner}"
+    body = {"installed_version": installed_version}
+    try:
+        r = requests.post(url, json=body, timeout=HTTP_TIMEOUT_SEC)
+        if r.status_code != 200:
+            log(f"BOOTSTRAP report fail http={r.status_code} body={r.text[:200]}")
+    except Exception as e:
+        log(f"BOOTSTRAP report exception: {type(e).__name__}: {e}")
+
+
 def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[str, str]:
-    """Execute one command. Returns (status, detail) where status in {'ok','error'}."""
+    """
+    Execute one command.
+    Returns (status, detail) where status in {'ok','error'}.
+    """
     category = (cmd_fields.get("category") or "").strip()
     action = (cmd_fields.get("action") or "").strip()
-    _args = parse_args_json(cmd_fields.get("args_json") or "")
+    args = parse_args_json(cmd_fields.get("args_json") or "")
 
+    # Current policy: only "scan" category is supported in Step4B.
     if category and category != "scan":
         return "error", f"unsupported category={category}"
 
@@ -194,42 +217,21 @@ def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[s
         return ("ok" if ok else "error"), detail
 
     if action == "bundle.apply":
-        bundle_id = (_args.get("bundle_id") or "").strip()
-        if not bundle_id:
-            bundle_id = (cmd_fields.get("bundle_id") or "").strip()
-        if not bundle_id:
-            return "error", "missing bundle_id"
+        bundle_id = (args.get("bundle_id") or "").strip() or (cmd_fields.get("bundle_id") or "").strip()
+        url = (args.get("url") or "").strip() or (cmd_fields.get("url") or "").strip()
 
-        ok, detail, prev = apply_bundle(nms_base, bundle_id)
+        if not bundle_id or not url:
+            return "error", "bundle.apply missing bundle_id or url"
+
+        ok, detail = apply_bundle(bundle_id, url)  # ensure bundle_manager.py matches this signature
         status = "ok" if ok else "error"
 
-        report_bundle_result(nms_base, scanner, bundle_id, prev, status, detail)
+        if ok:
+            report_installed_bundle(nms_base, scanner, bundle_id)
+
         return status, detail
 
     return "error", f"unknown action={action}"
-
-
-def report_bundle_result(nms_base: str, scanner: str, bundle_id: str, prev_bundle_id: str,
-                         status: str, detail: str) -> None:
-    """
-    Best-effort report to NMS bundle management endpoint.
-    Does not replace /cmd/ack; it's for bundle tracking.
-    """
-    url = f"{nms_base}/bootstrap/report/{scanner}"
-    body = {
-        "scanner": scanner,
-        "bundle_id": bundle_id,
-        "prev_bundle_id": prev_bundle_id,
-        "status": status,   # ok | error
-        "detail": detail,
-        "ts_utc": utc_iso(),
-    }
-    try:
-        r = requests.post(url, json=body, timeout=HTTP_TIMEOUT_SEC)
-        if r.status_code != 200:
-            log(f"BOOTSTRAP report fail http={r.status_code} body={r.text[:200]}")
-    except Exception as e:
-        log(f"BOOTSTRAP report exception: {type(e).__name__}: {e}")
 
 
 def main() -> None:
@@ -266,7 +268,6 @@ def main() -> None:
             time.sleep(POLL_INTERVAL_SEC)
             continue
 
-        # cmds: [[xid, fields], ...]
         for item in cmds:
             try:
                 xid, fields = item
@@ -275,9 +276,9 @@ def main() -> None:
                 continue
 
             fields = fields or {}
-            cmd_id = fields.get("cmd_id") or ""
-            action = fields.get("action") or ""
-            execute_at = fields.get("execute_at") or ""
+            cmd_id = (fields.get("cmd_id") or "").strip()
+            action = (fields.get("action") or "").strip()
+            execute_at = (fields.get("execute_at") or "").strip()
 
             if not cmd_id:
                 log(f"skip command without cmd_id xid={xid} action={action}")

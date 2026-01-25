@@ -20,12 +20,14 @@ cd "${BASE_DIR}"
 REQUIRED_FILES=(
   agent.py
   bundle_manager.py
-  uploader.py
-  scan_wifi.sh
-  parse_iw.py
-  scan_payload.py
+  config.py
   main.py
+  parse_iw.py
+  register.py
+  scan_payload.py
+  scan_wifi.sh
   scenario_commands.md
+  uploader.py
   windows.py
 )
 
@@ -49,12 +51,14 @@ echo "Copying files..."
 
 cp agent.py               "${BUNDLE_DIR}/"
 cp bundle_manager.py      "${BUNDLE_DIR}/"
-cp uploader.py            "${BUNDLE_DIR}/"
-cp scan_wifi.sh           "${BUNDLE_DIR}/"
-cp parse_iw.py            "${BUNDLE_DIR}/"
-cp scan_payload.py        "${BUNDLE_DIR}/"
+cp config.py              "${BUNDLE_DIR}/"
 cp main.py                "${BUNDLE_DIR}/"
+cp parse_iw.py            "${BUNDLE_DIR}/"
+cp register.py            "${BUNDLE_DIR}/"
+cp scan_payload.py        "${BUNDLE_DIR}/"
+cp scan_wifi.sh           "${BUNDLE_DIR}/"
 cp scenario_commands.md   "${BUNDLE_DIR}/"
+cp uploader.py            "${BUNDLE_DIR}/"
 cp windows.py             "${BUNDLE_DIR}/"
 
 # ------------------------------------------------------------
@@ -66,14 +70,69 @@ set -euo pipefail
 
 echo "[install.sh] Applying robot bundle..."
 
-# Ensure scripts are executable
+BASE_DIR="/home/pi/_RunScanner"
+BUNDLE_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+REQUIRED_BUNDLE_FILES=(
+  agent.py
+  bundle_manager.py
+  config.py
+  main.py
+  parse_iw.py
+  register.py
+  scan_payload.py
+  scan_wifi.sh
+  scenario_commands.md
+  uploader.py
+  windows.py
+)
+
+KEEP_RUNTIME_FILES=(
+  bundles
+  make_bundle.sh
+  MoveOut
+  nms_base.txt
+  scanner_name.txt
+)
+
+echo "[install.sh] Verifying bundle contents..."
+for f in "${REQUIRED_BUNDLE_FILES[@]}"; do
+  if [[ ! -f "${BUNDLE_DIR}/${f}" ]]; then
+    echo "[install.sh] ERROR: missing bundle file: ${f}"
+    exit 1
+  fi
+done
+
+echo "[install.sh] Cleaning runtime directory..."
+cd "${BASE_DIR}"
+
+for item in * .*; do
+  [[ "${item}" == "." || "${item}" == ".." ]] && continue
+
+  keep=false
+  for k in "${KEEP_RUNTIME_FILES[@]}"; do
+    if [[ "${item}" == "${k}" ]]; then
+      keep=true
+      break
+    fi
+  done
+
+  if [[ "${keep}" == false ]]; then
+    rm -rf "${item}"
+  fi
+done
+
+echo "[install.sh] Copying bundle files into runtime..."
+for f in "${REQUIRED_BUNDLE_FILES[@]}"; do
+  cp "${BUNDLE_DIR}/${f}" "${BASE_DIR}/"
+done
+
+echo "[install.sh] Fixing permissions..."
 chmod +x scan_wifi.sh || true
 chmod +x *.py || true
 
 echo "[install.sh] Bundle install completed."
 EOF
-
-chmod +x "${BUNDLE_DIR}/install.sh"
 
 # ------------------------------------------------------------
 # Create ZIP

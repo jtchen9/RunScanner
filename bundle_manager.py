@@ -4,7 +4,7 @@ Bundle manager (Pi-side, production).
 
 Responsibilities:
 - Stop running services (highest priority)
-- Download bundle ZIP from NMS: GET /bootstrap/bundle/{bundle_id}
+- Download bundle ZIP from provided URL
 - Extract into bundles/{bundle_id}
 - Switch active symlink
 - Write active_bundle.txt (sole source of truth)
@@ -64,8 +64,7 @@ def restart_uploader() -> None:
     _systemctl("restart", SERVICE_UPLOADER)
 
 
-def _download_bundle(nms_base: str, bundle_id: str, dst_zip: Path) -> None:
-    url = f"{nms_base}/bootstrap/bundle/{bundle_id}"
+def _download_bundle(url: str, dst_zip: Path) -> None:
     r = requests.get(url, stream=True, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     with dst_zip.open("wb") as f:
@@ -90,25 +89,17 @@ def _run_install_hook(bundle_dir: Path) -> None:
         raise RuntimeError(f"install.sh failed: {out}")
 
 
-def _read_prev_bundle_id() -> str:
-    try:
-        s = ACTIVE_BUNDLE_FILE.read_text(encoding="utf-8").strip()
-        return s if s else "0"
-    except Exception:
-        return "0"
-
-
-def apply_bundle(nms_base: str, bundle_id: str) -> Tuple[bool, str, str]:
+def apply_bundle(bundle_id: str, url: str) -> Tuple[bool, str]:
     """
-    Main entry.
-    Returns (ok, detail, prev_bundle_id)
-    """
-    prev = _read_prev_bundle_id()
+    Apply a bundle specified by (bundle_id, url).
 
+    Returns:
+        (ok, detail)
+    """
     try:
         BUNDLES_DIR.mkdir(parents=True, exist_ok=True)
 
-        # 1) HARD STOP (highest priority)
+        # 1) HARD STOP
         stop_all_services()
 
         # 2) Download
@@ -116,16 +107,17 @@ def apply_bundle(nms_base: str, bundle_id: str) -> Tuple[bool, str, str]:
         if tmp_zip.exists():
             tmp_zip.unlink()
 
-        _download_bundle(nms_base, bundle_id, tmp_zip)
+        _download_bundle(url, tmp_zip)
 
         # 3) Extract
         bundle_dir = BUNDLES_DIR / bundle_id
         if bundle_dir.exists():
-            return False, f"bundle already exists: {bundle_id}", prev
+            # overwrite semantics: remove old bundle completely
+            subprocess.run(["rm", "-rf", str(bundle_dir)], check=False)
 
         _extract_zip(tmp_zip, bundle_dir)
 
-        # 4) Activate (atomic)
+        # 4) Activate
         if ACTIVE_LINK.exists() or ACTIVE_LINK.is_symlink():
             ACTIVE_LINK.unlink()
         ACTIVE_LINK.symlink_to(bundle_dir)
@@ -138,7 +130,7 @@ def apply_bundle(nms_base: str, bundle_id: str) -> Tuple[bool, str, str]:
         # 6) Restart uploader only
         restart_uploader()
 
-        return True, f"bundle applied: {bundle_id}", prev
+        return True, f"bundle applied: {bundle_id}"
 
     except Exception as e:
-        return False, f"bundle apply failed: {type(e).__name__}: {e}", prev
+        return False, f"bundle apply failed: {type(e).__name__}: {e}"

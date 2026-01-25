@@ -2,7 +2,6 @@
 import os
 import time
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -12,6 +11,7 @@ from config import (
     get_nms_base,
     SCANNER_NAME_FILE,
     LATEST_JSON_FILE,
+    local_ts,   # MUST match NMS TIME_FMT
 )
 
 IFACE = os.getenv("IFACE", "wlan0")
@@ -22,12 +22,8 @@ HTTP_TIMEOUT_SEC = int(os.getenv("HTTP_TIMEOUT_SEC", "8"))
 LOG_PATH = BASE_DIR / "uploader.log"
 
 
-def utc_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def log(msg: str) -> None:
-    line = f"[{utc_iso()}] {msg}"
+    line = f"[{local_ts()}] {msg}"
     print(line, flush=True)
     try:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)

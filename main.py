@@ -6,6 +6,8 @@ import subprocess
 import threading
 import json
 from pathlib import Path
+from config import local_ts
+from config import get_bundle_version
 
 SERVICE_NAME = "scanner-poller.service"
 SYSTEMCTL = "/usr/bin/systemctl"   
@@ -87,9 +89,9 @@ def service_stop():
 
 def set_button_and_status(active: bool):
     """Update button label + status text based on active flag."""
-    now_str = datetime.now().strftime("%H:%M:%S")
+    now_str = local_ts()
 
-    reg_line = f"Scanner: {scanner_name or '(unassigned)'}\n{register_status}"
+    reg_line = f"Scanner: {scanner_name or '(unassigned)'}  Bundle: {get_bundle_version()}\n{register_status}"
     scan_line = f"Scanning Channel since {now_str}" if active else f"Stop Scanning at {now_str}"
 
     if active:
