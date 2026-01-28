@@ -30,7 +30,7 @@ from config import (
     # AV single source of truth
     AV_DIR,
     AV_CFG_FILE,
-    SERVICE_NAME_AVSTREAM,
+    SERVICE_AVSTREAM,
     AV_DEFAULT_SERVER,
     AV_DEFAULT_RTSP_PORT,
     AV_DEFAULT_TRANSPORT,
@@ -38,19 +38,20 @@ from config import (
     AV_DEFAULT_AUDIO_DEV,
     AV_DEFAULT_SIZE,
     AV_DEFAULT_FPS,
-)
-from config import SYSTEMCTL, SUDO, SERVICE_NAME_SCANNER_POLLER, SERVICE_NAME_AVSTREAM
-
-import requests
-
-from bundle_manager import apply_bundle
-
-from config import (
     BASE_DIR,
     get_nms_base,
     SCANNER_NAME_FILE,
     local_ts,
 )
+from config import SYSTEMCTL, SUDO, SERVICE_SCANNER_POLLER, SERVICE_AVSTREAM
+from config import (
+    MPV_BIN, AUDIO_AO_DEFAULT, AUDIO_DEVICE_DEFAULT, AUDIO_VOLUME_DEFAULT,
+)
+
+import requests
+
+from bundle_manager import apply_bundle
+
 
 REGISTER_PY = BASE_DIR / "register.py"
 LOG_PATH = BASE_DIR / "agent.log"
@@ -62,6 +63,10 @@ POLL_LIMIT = int(os.getenv("POLL_LIMIT", "10"))
 HTTP_TIMEOUT_SEC = int(os.getenv("HTTP_TIMEOUT_SEC", "10"))
 REGISTER_RETRY_SEC = int(os.getenv("REGISTER_RETRY_SEC", "10"))
 OFFLINE_RETRY_SEC = int(os.getenv("OFFLINE_RETRY_SEC", "5"))
+
+# Audio/TTS
+AUDIO_PID_FILE = "/tmp/scanner_audio_play.pid"
+TTS_SCRIPT = str(BASE_DIR / "av" / "tts_say.sh")
 
 
 def log(msg: str) -> None:
@@ -118,11 +123,11 @@ def _run_systemctl(args: List[str]) -> Tuple[bool, str, str]:
             return False, (e2.stdout or "").strip(), (e2.stderr or e1.stderr or "").strip()
 
 def exec_scan_start() -> Tuple[bool, str]:
-    ok, out, err = _run_systemctl(["start", SERVICE_NAME_SCANNER_POLLER])
+    ok, out, err = _run_systemctl(["start", SERVICE_SCANNER_POLLER])
     return (True, "started scanner-poller.service") if ok else (False, f"start failed: {err or out}")
 
 def exec_scan_stop() -> Tuple[bool, str]:
-    ok, out, err = _run_systemctl(["stop", SERVICE_NAME_SCANNER_POLLER])
+    ok, out, err = _run_systemctl(["stop", SERVICE_SCANNER_POLLER])
     return (True, "stopped scanner-poller.service") if ok else (False, f"stop failed: {err or out}")
 
 def exec_scan_once() -> Tuple[bool, str]:
@@ -233,12 +238,80 @@ def exec_av_stream_start(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]
     if not ok:
         return False, msg
 
-    ok2, out, err = _run_systemctl(["start", SERVICE_NAME_AVSTREAM])
-    return (True, f"started {SERVICE_NAME_AVSTREAM}") if ok2 else (False, f"start failed: {err or out}")
+    ok2, out, err = _run_systemctl(["start", SERVICE_AVSTREAM])
+    return (True, f"started {SERVICE_AVSTREAM}") if ok2 else (False, f"start failed: {err or out}")
 
 def exec_av_stream_stop() -> Tuple[bool, str]:
-    ok, out, err = _run_systemctl(["stop", SERVICE_NAME_AVSTREAM])
-    return (True, f"stopped {SERVICE_NAME_AVSTREAM}") if ok else (False, f"stop failed: {err or out}")
+    ok, out, err = _run_systemctl(["stop", SERVICE_AVSTREAM])
+    return (True, f"stopped {SERVICE_AVSTREAM}") if ok else (False, f"stop failed: {err or out}")
+
+def _kill_pidfile(pidfile: str) -> None:
+    try:
+        with open(pidfile, "r") as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 15)  # SIGTERM
+    except Exception:
+        pass
+    try:
+        os.remove(pidfile)
+    except Exception:
+        pass
+
+def exec_audio_play(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
+    audio_file = (args.get("file") or "").strip()
+    if not audio_file:
+        return False, "audio.play missing args.file"
+
+    stop_existing = bool(args.get("stop_existing", True))
+    if stop_existing:
+        _kill_pidfile(AUDIO_PID_FILE)
+
+    ao = (args.get("ao") or AUDIO_AO_DEFAULT).strip()
+    audio_dev = (args.get("audio_device") or AUDIO_DEVICE_DEFAULT).strip()
+    vol = int(args.get("volume") or AUDIO_VOLUME_DEFAULT)
+
+    cmd = [
+        MPV_BIN,
+        f"--ao={ao}",
+        f"--audio-device={audio_dev}",
+        "--no-video",
+        f"--volume={vol}",
+        audio_file,
+    ]
+
+    try:
+        p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(AUDIO_PID_FILE, "w") as f:
+            f.write(str(p.pid))
+        return True, f"audio.play started pid={p.pid} file={audio_file}"
+    except Exception as e:
+        return False, f"audio.play exception: {type(e).__name__}: {e}"
+
+def exec_tts_say(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
+    text = (args.get("text") or "").strip()
+    if not text:
+        return False, "tts.say missing args.text"
+
+    lead_ms = int(args.get("lead_silence_ms") or 300)
+    vol = int(args.get("volume") or AUDIO_VOLUME_DEFAULT)
+
+    # Keep it simple + robust: call the shell script that does:
+    # espeak-ng -> wav, prepend silence, mpv playback
+    try:
+        cp = subprocess.run(
+            ["/usr/bin/bash", TTS_SCRIPT, text, str(lead_ms), str(vol)],
+            check=False,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=30,   # avoid hanging forever
+        )
+        if cp.returncode == 0:
+            return True, f"tts.say ok text_len={len(text)} lead_ms={lead_ms}"
+        return False, f"tts.say rc={cp.returncode} stderr={(cp.stderr or '')[:200].strip()}"
+    except Exception as e:
+        return False, f"tts.say exception: {type(e).__name__}: {e}"
 
 def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[str, str]:
     """
@@ -287,6 +360,14 @@ def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[s
 
     if action == "av.stream.stop":
         ok, detail = exec_av_stream_stop()
+        return ("ok" if ok else "error"), detail
+    
+    if action == "audio.play":
+        ok, detail = exec_audio_play(scanner, args)
+        return ("ok" if ok else "error"), detail
+
+    if action == "tts.say":
+        ok, detail = exec_tts_say(scanner, args)
         return ("ok" if ok else "error"), detail
 
     return "error", f"unknown action={action}"

@@ -18,19 +18,13 @@ import subprocess
 import zipfile
 from pathlib import Path
 from typing import Tuple
+from config import BASE_DIR, SYSTEMCTL, SUDO, SERVICE_SCANNER_POLLER, SERVICE_UPLOADER
 
 import requests
 
-BASE_DIR = Path("/home/pi/_RunScanner")
 BUNDLES_DIR = BASE_DIR / "bundles"
 ACTIVE_LINK = BUNDLES_DIR / "active"
 ACTIVE_BUNDLE_FILE = BUNDLES_DIR / "active_bundle.txt"
-
-SYSTEMCTL = "/usr/bin/systemctl"
-SUDO = "/usr/bin/sudo"
-
-SERVICE_SCAN = "scanner-poller.service"
-SERVICE_UPLOADER = "scanner-uploader.service"
 
 HTTP_TIMEOUT = 30
 
@@ -56,7 +50,7 @@ def _systemctl(action: str, service: str) -> None:
 
 
 def stop_all_services() -> None:
-    _systemctl("stop", SERVICE_SCAN)
+    _systemctl("stop", SERVICE_SCANNER_POLLER)
     _systemctl("stop", SERVICE_UPLOADER)
 
 

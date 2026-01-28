@@ -281,3 +281,74 @@ Observable:
 ACK rule:
     ACK ok if systemctl stop ... succeeds (even if it was already stopped).
     ACK error only if systemctl returns a failure.
+
+---
+
+### NMS.CMD.AUDIO.PLAY
+
+Purpose:
+    Play an audio file (mp3/wav) locally on the Pi speaker/headphone, for demo/attention/notification.
+
+Category: av
+
+Action: audio.play
+
+Required args (args_json):
+    {
+    "file": "/home/pi/_RunScanner/av/demo.mp3"
+    }
+
+Optional args (args_json):
+
+Pi behavior:
+    Optionally stops an existing audio playback process (if stop_existing=true).
+    Starts playback using mpv (non-blocking):
+        mpv --ao=alsa --audio-device=alsa/default --no-video --volume=<volume> <file>
+
+Observable:
+    /home/pi/_RunScanner/agent.log shows START + PID
+    Optional pid file: /tmp/scanner_audio_play.pid
+
+Notes:
+    This is a one-shot trigger (not a systemd service).
+    Intended for short clips, alerts, “robot moving” music, etc.
+
+---
+
+### NMS.CMD.TTS.SAY
+
+Purpose:
+Make the Pi speak a short text string (TTS) through its audio output.
+
+Category: av
+
+Action: tts.say
+
+Required args (args_json):
+
+
+Optional args (args_json):
+    {
+    "lead_silence_ms": 300,
+    "voice": "en-us",
+    "speed_wpm": 175,
+    "volume": 90
+    }
+
+Pi behavior:
+    Generates a temporary wav via espeak-ng (or your chosen TTS backend).
+    Prepends a short silence (default 300ms) to prevent clipping of the first few words.
+    Plays the resulting wav using mpv (blocking until finished, but with a short safety timeout).
+
+Observable:
+    /home/pi/_RunScanner/agent.log contains TTS generation + playback result
+    Temporary files:
+        /tmp/tts_raw.wav
+        /tmp/tts_padded.wav
+
+Notes:
+    This is a one-shot trigger (not a systemd service).
+    Long text is allowed but not recommended; keep it short for reliable demo timing.
+
+---
+

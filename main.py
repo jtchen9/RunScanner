@@ -9,9 +9,8 @@ from pathlib import Path
 from config import local_ts
 from config import get_bundle_version
 import shutil
-from config import SYSTEMCTL, SUDO, SERVICE_NAME_SCANNER_POLLER
+from config import BASE_DIR, SYSTEMCTL, SUDO, SERVICE_SCANNER_POLLER
 
-BASE_DIR = Path("/home/pi/_RunScanner")
 REGISTER_PY = BASE_DIR / "register.py"
 SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"
 LAST_REGISTER_FILE = BASE_DIR / "last_register.json"
@@ -219,15 +218,15 @@ def _run_systemctl(args):
             return False, (e2.stdout or "").strip(), (e2.stderr or e1.stderr or "").strip()
         
 def service_is_active():
-    ok, out, _ = _run_systemctl(["is-active", SERVICE_NAME_SCANNER_POLLER])
+    ok, out, _ = _run_systemctl(["is-active", SERVICE_SCANNER_POLLER])
     # systemctl is-active returns nonzero when inactive; treat output text for truth
     return ok and out.strip() == "active"
 
 def service_start():
-    return _run_systemctl(["start", SERVICE_NAME_SCANNER_POLLER])
+    return _run_systemctl(["start", SERVICE_SCANNER_POLLER])
 
 def service_stop():
-    return _run_systemctl(["stop", SERVICE_NAME_SCANNER_POLLER])
+    return _run_systemctl(["stop", SERVICE_SCANNER_POLLER])
 
 def set_button_and_status(active: bool):
     """Update button label + status text based on active flag."""

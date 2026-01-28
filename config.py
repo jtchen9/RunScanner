@@ -94,6 +94,9 @@ def get_nms_base() -> Optional[str]:
     return discover_nms_base(force=False)
 
 
+SYSTEMCTL = "/usr/bin/systemctl"
+SUDO = "/usr/bin/sudo"
+
 # ------------------------------------------------------------------
 # System-wide endpoints (shared across the entire system)
 # ------------------------------------------------------------------
@@ -104,11 +107,18 @@ WEB_SERVER = "6g-private.com"
 # Services (systemd) + systemctl paths
 # ------------------------------------------------------------------
 
-SYSTEMCTL = "/usr/bin/systemctl"
-SUDO = "/usr/bin/sudo"
+SERVICE_SCANNER_POLLER = "scanner-poller.service"
+SERVICE_UPLOADER = "scanner-uploader.service"
+SERVICE_AVSTREAM = "scanner-avstream.service"
 
-SERVICE_NAME_SCANNER_POLLER = "scanner-poller.service"
-SERVICE_NAME_AVSTREAM = "scanner-avstream.service"
+# ------------------------------------------------------------------
+# Audio playback defaults (known-good on your Pi)
+# ------------------------------------------------------------------
+
+MPV_BIN = "/usr/bin/mpv"
+AUDIO_AO_DEFAULT = "alsa"
+AUDIO_DEVICE_DEFAULT = "alsa/default"
+AUDIO_VOLUME_DEFAULT = 90
 
 # ------------------------------------------------------------------
 # Registration / identity
@@ -142,7 +152,7 @@ LATEST_JSON_FILE = Path("/tmp/latest_scan.json")
 AV_DIR = BASE_DIR / "av"
 AV_CFG_FILE = AV_DIR / "av_stream_config.json"
 
-SERVICE_NAME_AVSTREAM = "scanner-avstream.service"
+SERVICE_AVSTREAM = "scanner-avstream.service"
 
 # Default streaming target (can be overridden by command args)
 AV_DEFAULT_SERVER = WEB_SERVER
