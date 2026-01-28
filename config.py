@@ -23,11 +23,9 @@ BASE_DIR = Path("/home/pi/_RunScanner")
 # ONE official time format everywhere (Pi <-> NMS)
 TIME_FMT: str = "%Y-%m-%d-%H:%M:%S"
 
-
 def local_ts() -> str:
     """Return current local time string in TIME_FMT."""
     return datetime.now().strftime(TIME_FMT)
-
 
 # ------------------------------------------------------------------
 # NMS discovery
@@ -60,7 +58,6 @@ def get_bundle_version() -> str:
     except Exception:
         return "0"
 
-
 def _probe_nms(base: str) -> bool:
     """Return True if NMS /health responds."""
     try:
@@ -68,7 +65,6 @@ def _probe_nms(base: str) -> bool:
         return r.status_code == 200
     except Exception:
         return False
-
 
 def discover_nms_base(force: bool = False) -> Optional[str]:
     """
@@ -93,11 +89,26 @@ def discover_nms_base(force: bool = False) -> Optional[str]:
 
     return None
 
-
 def get_nms_base() -> Optional[str]:
     """Return active NMS base URL, or None if unavailable."""
     return discover_nms_base(force=False)
 
+
+# ------------------------------------------------------------------
+# System-wide endpoints (shared across the entire system)
+# ------------------------------------------------------------------
+
+WEB_SERVER = "6g-private.com"
+
+# ------------------------------------------------------------------
+# Services (systemd) + systemctl paths
+# ------------------------------------------------------------------
+
+SYSTEMCTL = "/usr/bin/systemctl"
+SUDO = "/usr/bin/sudo"
+
+SERVICE_NAME_SCANNER_POLLER = "scanner-poller.service"
+SERVICE_NAME_AVSTREAM = "scanner-avstream.service"
 
 # ------------------------------------------------------------------
 # Registration / identity
@@ -108,10 +119,8 @@ LAST_REGISTER_FILE = BASE_DIR / "last_register.json"
 
 REG_IFACE_DEFAULT = "wlan0"
 
-
 def get_reg_iface() -> str:
     return os.getenv("REG_IFACE", REG_IFACE_DEFAULT)
-
 
 def get_mac_address(iface: str) -> str:
     try:
@@ -120,9 +129,34 @@ def get_mac_address(iface: str) -> str:
     except Exception:
         return ""
 
-
 # ------------------------------------------------------------------
 # Scan data
 # ------------------------------------------------------------------
 
 LATEST_JSON_FILE = Path("/tmp/latest_scan.json")
+
+# ------------------------------------------------------------------
+# Audio / Video (AV)
+# ------------------------------------------------------------------
+
+AV_DIR = BASE_DIR / "av"
+AV_CFG_FILE = AV_DIR / "av_stream_config.json"
+
+SERVICE_NAME_AVSTREAM = "scanner-avstream.service"
+
+# Default streaming target (can be overridden by command args)
+AV_DEFAULT_SERVER = WEB_SERVER
+AV_DEFAULT_RTSP_PORT = 8554
+AV_DEFAULT_TRANSPORT = "tcp"     # tcp|udp (we default tcp)
+AV_DEFAULT_PATH_PREFIX = ""      # optional prefix, usually empty
+
+# Default capture devices
+AV_DEFAULT_VIDEO_DEV = "/dev/video0"
+AV_DEFAULT_AUDIO_DEV = "plughw:1,0"
+
+# Default capture format
+AV_DEFAULT_SIZE = "640x480"
+AV_DEFAULT_FPS = 30
+
+# Logging (if runner/service writes logs here)
+AV_LOG_FILE = AV_DIR / "av_stream.log"

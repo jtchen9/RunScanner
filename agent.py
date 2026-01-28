@@ -20,6 +20,26 @@ import time
 import json
 import subprocess
 from typing import Any, Dict, Tuple, List
+from pathlib import Path
+from config import (
+    BASE_DIR,
+    get_nms_base,
+    SCANNER_NAME_FILE,
+    local_ts,
+
+    # AV single source of truth
+    AV_DIR,
+    AV_CFG_FILE,
+    SERVICE_NAME_AVSTREAM,
+    AV_DEFAULT_SERVER,
+    AV_DEFAULT_RTSP_PORT,
+    AV_DEFAULT_TRANSPORT,
+    AV_DEFAULT_VIDEO_DEV,
+    AV_DEFAULT_AUDIO_DEV,
+    AV_DEFAULT_SIZE,
+    AV_DEFAULT_FPS,
+)
+from config import SYSTEMCTL, SUDO, SERVICE_NAME_SCANNER_POLLER, SERVICE_NAME_AVSTREAM
 
 import requests
 
@@ -34,11 +54,7 @@ from config import (
 
 REGISTER_PY = BASE_DIR / "register.py"
 LOG_PATH = BASE_DIR / "agent.log"
-
 SCAN_SCRIPT = str(BASE_DIR / "scan_wifi.sh")
-SERVICE_NAME_SCAN = "scanner-poller.service"
-SYSTEMCTL = "/usr/bin/systemctl"
-SUDO = "/usr/bin/sudo"
 
 # Runtime tuning
 POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", "5"))
@@ -57,13 +73,11 @@ def log(msg: str) -> None:
     except Exception:
         pass
 
-
 def read_scanner_name() -> str:
     try:
         return SCANNER_NAME_FILE.read_text(encoding="utf-8").strip()
     except Exception:
         return ""
-
 
 def run_register_once() -> None:
     """Best-effort registration attempt. Never raise."""
@@ -78,7 +92,6 @@ def run_register_once() -> None:
         )
     except Exception:
         pass
-
 
 def _run_systemctl(args: List[str]) -> Tuple[bool, str, str]:
     """Run systemctl. Try without sudo first; if that fails, retry with sudo -n."""
@@ -104,16 +117,13 @@ def _run_systemctl(args: List[str]) -> Tuple[bool, str, str]:
         except subprocess.CalledProcessError as e2:
             return False, (e2.stdout or "").strip(), (e2.stderr or e1.stderr or "").strip()
 
-
 def exec_scan_start() -> Tuple[bool, str]:
-    ok, out, err = _run_systemctl(["start", SERVICE_NAME_SCAN])
+    ok, out, err = _run_systemctl(["start", SERVICE_NAME_SCANNER_POLLER])
     return (True, "started scanner-poller.service") if ok else (False, f"start failed: {err or out}")
 
-
 def exec_scan_stop() -> Tuple[bool, str]:
-    ok, out, err = _run_systemctl(["stop", SERVICE_NAME_SCAN])
+    ok, out, err = _run_systemctl(["stop", SERVICE_NAME_SCANNER_POLLER])
     return (True, "stopped scanner-poller.service") if ok else (False, f"stop failed: {err or out}")
-
 
 def exec_scan_once() -> Tuple[bool, str]:
     """Run one scan immediately (does not rely on systemd service)."""
@@ -132,7 +142,6 @@ def exec_scan_once() -> Tuple[bool, str]:
     except Exception as e:
         return False, f"scan_once exception: {type(e).__name__}: {e}"
 
-
 def fetch_commands(nms_base: str, scanner: str) -> Tuple[bool, Dict[str, Any]]:
     """Returns (ok, payload). ok=False means network/parse error."""
     url = f"{nms_base}/cmd/poll/{scanner}"
@@ -143,7 +152,6 @@ def fetch_commands(nms_base: str, scanner: str) -> Tuple[bool, Dict[str, Any]]:
         return True, r.json()
     except Exception as e:
         return False, {"error": f"exception {type(e).__name__}", "detail": str(e)[:200]}
-
 
 def ack_command(nms_base: str, scanner: str, cmd_id: str, status: str, detail: str) -> None:
     """Best-effort ACK. Never raise."""
@@ -161,7 +169,6 @@ def ack_command(nms_base: str, scanner: str, cmd_id: str, status: str, detail: s
     except Exception as e:
         log(f"ACK exception cmd_id={cmd_id} {type(e).__name__}: {e}")
 
-
 def parse_args_json(s: str) -> Dict[str, Any]:
     """NMS stores args_json as JSON text. Pi parses it into dict."""
     if not s:
@@ -171,7 +178,6 @@ def parse_args_json(s: str) -> Dict[str, Any]:
         return obj if isinstance(obj, dict) else {}
     except Exception:
         return {}
-
 
 def report_installed_bundle(nms_base: str, scanner: str, installed_version: str) -> None:
     """
@@ -190,6 +196,49 @@ def report_installed_bundle(nms_base: str, scanner: str, installed_version: str)
     except Exception as e:
         log(f"BOOTSTRAP report exception: {type(e).__name__}: {e}")
 
+def _ensure_dir(p: Path) -> None:
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+def _write_json(p: Path, obj: Dict[str, Any]) -> Tuple[bool, str]:
+    try:
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(p)
+        return True, f"wrote {p}"
+    except Exception as e:
+        return False, f"write_json failed {p}: {type(e).__name__}: {e}"
+
+def exec_av_stream_start(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Write av_stream_config.json then start scanner-avstream.service.
+    Args are passed through to the runner script.
+    """
+    _ensure_dir(AV_DIR)
+
+    cfg = {
+        "server": (args.get("server") or "").strip() or AV_DEFAULT_SERVER,
+        "port": int(args.get("port") or AV_DEFAULT_RTSP_PORT),
+        "path": (args.get("path") or "").strip() or scanner,  # usually scanner02
+        "transport": (args.get("transport") or "").strip() or AV_DEFAULT_TRANSPORT,
+        "video_dev": (args.get("video_dev") or "").strip() or AV_DEFAULT_VIDEO_DEV,
+        "audio_dev": (args.get("audio_dev") or "").strip() or AV_DEFAULT_AUDIO_DEV,
+        "size": (args.get("size") or "").strip() or AV_DEFAULT_SIZE,
+        "fps": int(args.get("fps") or AV_DEFAULT_FPS),
+    }
+
+    ok, msg = _write_json(AV_CFG_FILE, cfg)
+    if not ok:
+        return False, msg
+
+    ok2, out, err = _run_systemctl(["start", SERVICE_NAME_AVSTREAM])
+    return (True, f"started {SERVICE_NAME_AVSTREAM}") if ok2 else (False, f"start failed: {err or out}")
+
+def exec_av_stream_stop() -> Tuple[bool, str]:
+    ok, out, err = _run_systemctl(["stop", SERVICE_NAME_AVSTREAM])
+    return (True, f"stopped {SERVICE_NAME_AVSTREAM}") if ok else (False, f"stop failed: {err or out}")
 
 def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[str, str]:
     """
@@ -200,8 +249,9 @@ def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[s
     action = (cmd_fields.get("action") or "").strip()
     args = parse_args_json(cmd_fields.get("args_json") or "")
 
-    # Current policy: only "scan" category is supported in Step4B.
-    if category and category != "scan":
+    # Policy: allow only known categories.
+    # (scan already exists; av added for streaming)
+    if category and category not in ("scan", "av"):
         return "error", f"unsupported category={category}"
 
     if action == "scan.start":
@@ -230,6 +280,14 @@ def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[s
             report_installed_bundle(nms_base, scanner, bundle_id)
 
         return status, detail
+
+    if action == "av.stream.start":
+        ok, detail = exec_av_stream_start(scanner, args)
+        return ("ok" if ok else "error"), detail
+
+    if action == "av.stream.stop":
+        ok, detail = exec_av_stream_stop()
+        return ("ok" if ok else "error"), detail
 
     return "error", f"unknown action={action}"
 
@@ -292,7 +350,6 @@ def main() -> None:
             ack_command(nms_base, scanner, cmd_id, status, detail)
 
         time.sleep(POLL_INTERVAL_SEC)
-
 
 if __name__ == "__main__":
     try:

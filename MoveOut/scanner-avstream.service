@@ -1,0 +1,29 @@
+# /etc/systemd/system/scanner-avstream.service
+[Unit]
+Description=Pi A/V Streaming (FFmpeg -> RTSP publish)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/_RunScanner
+
+# Ensure log dir exists (safe even if it already exists)
+ExecStartPre=/bin/mkdir -p /home/pi/_RunScanner/av
+
+ExecStart=/bin/bash /home/pi/_RunScanner/av/av_stream_runner.sh
+
+# Graceful stop: send SIGINT first (ffmpeg handles it), then SIGKILL if needed
+KillSignal=SIGINT
+TimeoutStopSec=10
+KillMode=process
+
+Restart=always
+RestartSec=2
+
+# Logs
+StandardOutput=append:/home/pi/_RunScanner/av/av_stream.log
+StandardError=append:/home/pi/_RunScanner/av/av_stream.log
+
+[Install]
+WantedBy=multi-user.target
