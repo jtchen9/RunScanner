@@ -62,7 +62,7 @@ Video streaming is orthogonal and controlled separately
 (Executed by agent.py)
 
 Category convention:
-media — real-time audio/video streaming and playback
+av — real-time audio/video streaming and playback
 (this avoids confusion with Wi-Fi RCPI channel scanning)
 
 ---
@@ -73,7 +73,7 @@ media — real-time audio/video streaming and playback
 Start live A/V streaming from the Pi to the MediaMTX server (RTSP publish).
 This is the standard “go live now” trigger.
 
-**Category:** media
+**Category:** av
 **Action:** av.stream.start
 
 **Required args (args_json):**
@@ -116,7 +116,7 @@ ACK error if config write or service start fails
 **Purpose:**
 Stop live A/V streaming from the Pi.
 
-**Category:** media
+**Category:** av
 **Action:** av.stream.stop
 
 **Optional args (args_json):**
@@ -144,7 +144,7 @@ ACK error only if systemctl returns failure
 **Purpose:**
 Play a local audio file (mp3 / wav) on the Pi speaker or headphone.
 
-**Category:** media
+**Category:** av
 **Action:** audio.play
 
 **Required args (args_json):**
@@ -169,12 +169,50 @@ Short clips recommended
 
 ---
 
+### NMS.CMD.AUDIO.STOP
+
+**Purpose:**
+Stop any currently-playing audio started by audio.play (mpv playback on the Pi).
+
+**Category:** av
+**Action:** audio.stop
+
+**Required args (args_json):**
+{}
+
+**Optional args (args_json):**
+{
+  "signal": "TERM",
+  "grace_ms": 800,
+  "force_kill": true
+}
+
+**Pi behavior:**
+If /tmp/scanner_audio_play.pid exists, read PID and send a signal to stop playback (default: SIGTERM).
+Wait briefly (grace_ms) for the process to exit.
+If still alive and force_kill=true, send SIGKILL.
+Remove the PID file (best-effort) after stopping.
+
+**Observable:**
+/home/pi/_RunScanner/agent.log shows stop attempt and result, e.g.
+    RESULT ... detail=audio.stop ok pid=XXXX
+    or detail=audio.stop: no pidfile
+PID file:
+    /tmp/scanner_audio_play.pid should be removed when stop succeeds.
+
+**Notes:**
+This command is primarily for testing, demos, and “long file” interruption.
+It is safe to call even when nothing is playing (should return ok with a “nothing to stop” detail, or ok with no pidfile).
+This command only manages playback started via your audio.play PID tracking. If mpv was launched manually outside the agent, it may not be affected unless you choose to broaden scope later (not required for Wave-1).
+
+---
+
 ### NMS.CMD.TTS.SAY
 
 **Purpose:**
 Make the Pi speak a short text string (TTS).
 
-**Category:** media
+**Category:** av
 **Action:** tts.say
 
 **Required args (args_json):**
@@ -197,17 +235,19 @@ Make the Pi speak a short text string (TTS).
 **Pi behavior:**
 Generates TTS wav (e.g. via espeak-ng)
 Prepends short silence to avoid clipping
-Plays wav using mpv (blocking with safety timeout)
+Plays wav using mpv (synchronous execution with timeout; agent continues after playback completes)
+Prepends configurable lead silence (lead_silence_ms) to avoid first-phoneme clipping on ALSA startup
 
 **Observable:**
 Agent log shows TTS generation + playback
 Temporary files:
     /tmp/tts_raw.wav
+    /tmp/tts_pad.wav
     /tmp/tts_padded.wav
 
 **Notes:**
 One-shot trigger
-Keep text short for reliable demos
+Keep text reasonably short (≲10–15 s speech) for reliable demos and responsiveness
 
 ===
 

@@ -1,0 +1,52 @@
+# /etc/sudoers.d/scanner-agent
+# Allow pi to control only our scanner services without password.
+
+pi ALL=(root) NOPASSWD: \
+  /usr/bin/systemctl start scanner-poller.service, \
+  /usr/bin/systemctl stop scanner-poller.service, \
+  /usr/bin/systemctl restart scanner-poller.service, \
+  /usr/bin/systemctl start scanner-uploader.service, \
+  /usr/bin/systemctl stop scanner-uploader.service, \
+  /usr/bin/systemctl restart scanner-uploader.service, \
+  /usr/bin/systemctl start scanner-agent.service, \
+  /usr/bin/systemctl stop scanner-agent.service, \
+  /usr/bin/systemctl restart scanner-agent.service, \
+  /usr/bin/systemctl start scanner-avstream.service, \
+  /usr/bin/systemctl stop scanner-avstream.service, \
+  /usr/bin/systemctl restart scanner-avstream.service, \
+  /usr/bin/systemctl enable scanner-agent.service, \
+  /usr/bin/systemctl disable scanner-agent.service, \
+  /usr/bin/systemctl enable scanner-uploader.service, \
+  /usr/bin/systemctl disable scanner-uploader.service, \
+  /usr/bin/systemctl enable scanner-avstream.service, \
+  /usr/bin/systemctl disable scanner-avstream.service, \
+  /usr/bin/systemctl is-active scanner-poller.service, \
+  /usr/bin/systemctl is-active scanner-uploader.service, \
+  /usr/bin/systemctl is-active scanner-agent.service, \
+  /usr/bin/systemctl is-active scanner-avstream.service, \
+  /usr/bin/systemctl status scanner-avstream.service, \
+  /usr/bin/systemctl daemon-reload, \
+  /bin/systemctl start scanner-poller.service, \
+  /bin/systemctl stop scanner-poller.service, \
+  /bin/systemctl restart scanner-poller.service, \
+  /bin/systemctl start scanner-uploader.service, \
+  /bin/systemctl stop scanner-uploader.service, \
+  /bin/systemctl restart scanner-uploader.service, \
+  /bin/systemctl start scanner-agent.service, \
+  /bin/systemctl stop scanner-agent.service, \
+  /bin/systemctl restart scanner-agent.service, \
+  /bin/systemctl start scanner-avstream.service, \
+  /bin/systemctl stop scanner-avstream.service, \
+  /bin/systemctl restart scanner-avstream.service, \
+  /bin/systemctl enable scanner-agent.service, \
+  /bin/systemctl disable scanner-agent.service, \
+  /bin/systemctl enable scanner-uploader.service, \
+  /bin/systemctl disable scanner-uploader.service, \
+  /bin/systemctl enable scanner-avstream.service, \
+  /bin/systemctl disable scanner-avstream.service, \
+  /bin/systemctl is-active scanner-poller.service, \
+  /bin/systemctl is-active scanner-uploader.service, \
+  /bin/systemctl is-active scanner-agent.service, \
+  /bin/systemctl is-active scanner-avstream.service, \
+  /bin/systemctl status scanner-avstream.service, \
+  /bin/systemctl daemon-reload

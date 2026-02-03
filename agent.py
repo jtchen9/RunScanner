@@ -19,6 +19,7 @@ import os
 import time
 import json
 import subprocess
+import signal
 from typing import Any, Dict, Tuple, List
 from pathlib import Path
 from config import (
@@ -245,18 +246,6 @@ def exec_av_stream_stop() -> Tuple[bool, str]:
     ok, out, err = _run_systemctl(["stop", SERVICE_AVSTREAM])
     return (True, f"stopped {SERVICE_AVSTREAM}") if ok else (False, f"stop failed: {err or out}")
 
-def _kill_pidfile(pidfile: str) -> None:
-    try:
-        with open(pidfile, "r") as f:
-            pid = int(f.read().strip())
-        os.kill(pid, 15)  # SIGTERM
-    except Exception:
-        pass
-    try:
-        os.remove(pidfile)
-    except Exception:
-        pass
-
 def exec_audio_play(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
     audio_file = (args.get("file") or "").strip()
     if not audio_file:
@@ -264,7 +253,7 @@ def exec_audio_play(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
 
     stop_existing = bool(args.get("stop_existing", True))
     if stop_existing:
-        _kill_pidfile(AUDIO_PID_FILE)
+        _ = exec_audio_stop(scanner, {})  # best-effort stop before playing
 
     ao = (args.get("ao") or AUDIO_AO_DEFAULT).strip()
     audio_dev = (args.get("audio_device") or AUDIO_DEVICE_DEFAULT).strip()
@@ -287,6 +276,93 @@ def exec_audio_play(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
         return True, f"audio.play started pid={p.pid} file={audio_file}"
     except Exception as e:
         return False, f"audio.play exception: {type(e).__name__}: {e}"
+
+def _read_pidfile(pidfile: str) -> int:
+    try:
+        with open(pidfile, "r") as f:
+            return int((f.read() or "").strip())
+    except Exception:
+        return 0
+
+def _pid_exists(pid: int) -> bool:
+    """
+    True if PID exists.
+    - ProcessLookupError => does NOT exist
+    - PermissionError    => exists (but no permission)
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        # be conservative: if unsure, assume it exists
+        return True
+
+def _remove_pidfile(pidfile: str) -> None:
+    try:
+        os.remove(pidfile)
+    except Exception:
+        pass
+
+def exec_audio_stop(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Stop any running audio playback started by audio.play.
+    Success cases:
+      - pidfile missing
+      - pidfile unreadable/empty
+      - pid in pidfile does not exist anymore
+      - process is terminated successfully
+    """
+    pid = _read_pidfile(AUDIO_PID_FILE)
+
+    # No pidfile / unreadable pid => consider already stopped
+    if pid <= 0:
+        _remove_pidfile(AUDIO_PID_FILE)
+        return True, "audio.stop ok (no pidfile / no pid)"
+
+    # PID already gone => success
+    if not _pid_exists(pid):
+        _remove_pidfile(AUDIO_PID_FILE)
+        return True, f"audio.stop ok (pid {pid} already exited)"
+
+    # Try graceful stop first
+    try:
+        os.kill(pid, 15)  # SIGTERM
+    except ProcessLookupError:
+        _remove_pidfile(AUDIO_PID_FILE)
+        return True, f"audio.stop ok (pid {pid} already exited)"
+    except Exception as e:
+        # Continue to SIGKILL attempt below, but record detail
+        pass
+
+    # Give it a brief moment
+    time.sleep(0.3)
+    if not _pid_exists(pid):
+        _remove_pidfile(AUDIO_PID_FILE)
+        return True, f"audio.stop ok (pid {pid} terminated by SIGTERM)"
+
+    # Escalate to SIGKILL
+    try:
+        os.kill(pid, 9)  # SIGKILL
+    except ProcessLookupError:
+        _remove_pidfile(AUDIO_PID_FILE)
+        return True, f"audio.stop ok (pid {pid} already exited)"
+    except Exception as e:
+        # If we can't kill, report error
+        return False, f"audio.stop failed: SIGKILL exception {type(e).__name__}: {e}"
+
+    time.sleep(0.3)
+    if not _pid_exists(pid):
+        _remove_pidfile(AUDIO_PID_FILE)
+        return True, f"audio.stop ok (pid {pid} killed by SIGKILL)"
+
+    # Still exists => real failure
+    return False, f"audio.stop failed pid={pid} (still exists after SIGKILL)"
 
 def exec_tts_say(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
     text = (args.get("text") or "").strip()
@@ -312,6 +388,7 @@ def exec_tts_say(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
         return False, f"tts.say rc={cp.returncode} stderr={(cp.stderr or '')[:200].strip()}"
     except Exception as e:
         return False, f"tts.say exception: {type(e).__name__}: {e}"
+
 
 def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[str, str]:
     """
@@ -365,7 +442,11 @@ def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[s
     if action == "audio.play":
         ok, detail = exec_audio_play(scanner, args)
         return ("ok" if ok else "error"), detail
-
+    
+    if action == "audio.stop":
+        ok, detail = exec_audio_stop(scanner, args)
+        return ("ok" if ok else "error"), detail
+    
     if action == "tts.say":
         ok, detail = exec_tts_say(scanner, args)
         return ("ok" if ok else "error"), detail
