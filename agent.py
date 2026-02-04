@@ -69,6 +69,18 @@ OFFLINE_RETRY_SEC = int(os.getenv("OFFLINE_RETRY_SEC", "5"))
 AUDIO_PID_FILE = "/tmp/scanner_audio_play.pid"
 TTS_SCRIPT = str(BASE_DIR / "av" / "tts_say.sh")
 
+# Voice (Wave-2)
+from pathlib import Path
+VOICE_DIR = BASE_DIR / "voice"
+VOICE_CFG_FILE = VOICE_DIR / "voice_config.json"
+SERVICE_VOICE = "scanner-voice.service"
+from voice.voice_common import (
+    ensure_voice_config,
+    load_voice_config,
+    update_voice_config,
+    validate_script,
+)
+
 
 def log(msg: str) -> None:
     line = f"[{local_ts()}] {msg}"
@@ -227,7 +239,7 @@ def exec_av_stream_start(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]
     cfg = {
         "server": (args.get("server") or "").strip() or AV_DEFAULT_SERVER,
         "port": int(args.get("port") or AV_DEFAULT_RTSP_PORT),
-        "path": (args.get("path") or "").strip() or scanner,  # usually scanner02
+        "path": (args.get("path") or "").strip() or scanner,  # usually twin-scout-alpha
         "transport": (args.get("transport") or "").strip() or AV_DEFAULT_TRANSPORT,
         "video_dev": (args.get("video_dev") or "").strip() or AV_DEFAULT_VIDEO_DEV,
         "audio_dev": (args.get("audio_dev") or "").strip() or AV_DEFAULT_AUDIO_DEV,
@@ -389,6 +401,69 @@ def exec_tts_say(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"tts.say exception: {type(e).__name__}: {e}"
 
+def exec_voice_start(args: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Wave-2: start scanner-voice.service + write initial config.
+    """
+    try:
+        ensure_voice_config()
+    except Exception:
+        pass
+
+    mode = (args.get("mode") or "").strip() or "name_listen"
+    conv_to = int(args.get("conversation_timeout_sec") or 20)
+    llm_to = int(args.get("llm_timeout_sec") or 30)
+
+    # For Wave-2, script may be provided here or via voice.script.set
+    script = validate_script(args.get("commands") or args.get("script"))
+
+    new_cfg = update_voice_config({
+        "mode": mode,
+        "conversation_timeout_sec": conv_to,
+        "llm_timeout_sec": llm_to,
+        "script": script if script else load_voice_config().get("script", []),
+    })
+
+    ok, out, err = _run_systemctl(["start", SERVICE_VOICE])
+    if ok:
+        return True, f"started {SERVICE_VOICE} mode={new_cfg.get('mode')} script_len={len(new_cfg.get('script') or [])}"
+    return False, f"start failed: {err or out}"
+
+def exec_voice_stop() -> Tuple[bool, str]:
+    """
+    Wave-2: stop voice service and set mode=deaf in config.
+    """
+    try:
+        ensure_voice_config()
+        update_voice_config({"mode": "deaf"})
+    except Exception:
+        pass
+
+    ok, out, err = _run_systemctl(["stop", SERVICE_VOICE])
+    if ok:
+        return True, f"stopped {SERVICE_VOICE}"
+    return False, f"stop failed: {err or out}"
+
+def exec_voice_mode_set(args: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Wave-2: update mode in config only (service may be running or stopped).
+    """
+    mode = (args.get("mode") or "").strip()
+    if mode not in ("deaf", "name_listen", "conversation", "llm"):
+        return False, f"voice.mode.set invalid mode={mode}"
+
+    ensure_voice_config()
+    update_voice_config({"mode": mode})
+    return True, f"voice mode set to {mode}"
+
+def exec_voice_script_set(args: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Wave-2: replace script list in config.
+    """
+    commands = validate_script(args.get("commands"))
+    ensure_voice_config()
+    update_voice_config({"script": commands})
+    return True, f"voice script updated script_len={len(commands)}"
 
 def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[str, str]:
     """
@@ -401,7 +476,7 @@ def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[s
 
     # Policy: allow only known categories.
     # (scan already exists; av added for streaming)
-    if category and category not in ("scan", "av"):
+    if category and category not in ("scan", "av", "voice"):
         return "error", f"unsupported category={category}"
 
     if action == "scan.start":
@@ -449,6 +524,22 @@ def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[s
     
     if action == "tts.say":
         ok, detail = exec_tts_say(scanner, args)
+        return ("ok" if ok else "error"), detail
+
+    if action == "voice.start":
+        ok, detail = exec_voice_start(args)
+        return ("ok" if ok else "error"), detail
+
+    if action == "voice.stop":
+        ok, detail = exec_voice_stop()
+        return ("ok" if ok else "error"), detail
+
+    if action == "voice.mode.set":
+        ok, detail = exec_voice_mode_set(args)
+        return ("ok" if ok else "error"), detail
+
+    if action == "voice.script.set":
+        ok, detail = exec_voice_script_set(args)
         return ("ok" if ok else "error"), detail
 
     return "error", f"unknown action={action}"

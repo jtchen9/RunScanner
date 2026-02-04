@@ -1,0 +1,6 @@
+{
+  "mode": "deaf",
+  "conversation_timeout_sec": 20,
+  "llm_timeout_sec": 30,
+  "script": []
+}

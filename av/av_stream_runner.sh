@@ -36,7 +36,7 @@ FPS="${LINES[7]}"
 # Defaults / guardrails
 : "${SERVER:=6g-private.com}"
 : "${PORT:=8554}"
-: "${PATHNAME:=scanner02}"
+: "${PATHNAME:=twin-scout-bravo}"
 : "${TRANSPORT:=tcp}"
 : "${VIDEO_DEV:=/dev/video0}"
 : "${AUDIO_DEV:=plughw:1,0}"
@@ -51,6 +51,6 @@ echo "$(date) START avstream -> ${RTSP_URL} (v=${VIDEO_DEV} a=${AUDIO_DEV} ${SIZ
 exec /usr/bin/ffmpeg -hide_banner -loglevel info \
   -f v4l2 -framerate "${FPS}" -video_size "${SIZE}" -input_format mjpeg -i "${VIDEO_DEV}" \
   -f alsa -ac 1 -ar 48000 -i "${AUDIO_DEV}" \
-  -c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p -b:v 1200k \
-  -c:a aac -b:a 96k -ar 48000 \
+  -c:v libx264 -preset ultrafast -tune zerolatency -profile:v baseline -pix_fmt yuv420p -b:v 1200k \
+  -c:a libopus -b:a 64k -ar 48000 -ac 1 \
   -f rtsp -rtsp_transport "${TRANSPORT}" "${RTSP_URL}"

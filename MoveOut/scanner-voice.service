@@ -1,0 +1,21 @@
+# /etc/systemd/system/scanner-voice.service
+[Unit]
+Description=Scanner Voice Service (Wave-2)
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/_RunScanner
+ExecStart=/usr/bin/python3 /home/pi/_RunScanner/voice/voice_service.py
+Restart=always
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+
+# Keep logs in our own file; systemd journal still has them too
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

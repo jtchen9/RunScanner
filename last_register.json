@@ -3,7 +3,7 @@
   "status": "ok",
   "detail": "registered via http://192.168.137.1:8000",
   "http_code": 200,
-  "scanner": "scanner02",
+  "scanner": "twin-scout-bravo",
   "mac": "2c:cf:67:3f:7b:51",
   "ip": "192.168.137.2",
   "time_format": "%Y-%m-%d-%H:%M:%S"

@@ -1,4 +1,4 @@
-# Copied to /etc/systemd/system/scanner-agent.service
+# /etc/systemd/system/scanner-agent.service
 [Unit]
 Description=Scanner agent (Pi polls NMS commands and ACKs)
 After=network-online.target

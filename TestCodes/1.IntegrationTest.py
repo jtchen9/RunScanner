@@ -416,10 +416,12 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
     # You only change these two lines at office vs home:
     # -------------------------------------------------------------------------
-    # TEST_SCANNER = "scanner01"
+    # TEST_SCANNER = "twin-scout-alpha"
     # TEST_MAC = "2c:cf:67:d0:67:f3"
-    TEST_SCANNER = "scanner02"
+    TEST_SCANNER = "twin-scout-bravo"
     TEST_MAC = "2c:cf:67:3f:7b:51"
+    # TEST_SCANNER = "twin-scout-charlie"
+    # TEST_MAC = "2c:cf:67:d0:67:82"
 
     # -------------------------------------------------------------------------
     # Fixed defaults (do NOT change unless you intend to change the test)
@@ -430,12 +432,15 @@ if __name__ == "__main__":
     ENTER_SH = TEST_DIR / "enter_test_mode.sh"
     EXIT_SH  = TEST_DIR / "exit_test_mode.sh"
 
-    WL_SCANNER01 = "scanner01"
+    WL_SCANNER01 = "twin-scout-alpha"
     WL_MAC01 = "2c:cf:67:d0:67:f3"
 
-    WL_SCANNER02 = "scanner02"
+    WL_SCANNER02 = "twin-scout-bravo"
     WL_MAC02 = "2c:cf:67:3f:7b:51"
     
+    WL_SCANNER03 = "twin-scout-charlie"
+    WL_MAC03 = "2c:cf:67:d0:67:82"
+
     TEST_IP = "192.168.137.2"   # fixed as requested
 
     DO_BUNDLE_TEST = True

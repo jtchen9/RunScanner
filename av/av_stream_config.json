@@ -1,0 +1,10 @@
+{
+  "server": "6g-private.com",
+  "port": 8554,
+  "path": "scanner01",
+  "transport": "tcp",
+  "video_dev": "/dev/video0",
+  "audio_dev": "plughw:1,0",
+  "size": "640x480",
+  "fps": 30
+}
