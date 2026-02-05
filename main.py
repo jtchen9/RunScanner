@@ -242,6 +242,35 @@ def set_button_and_status(active: bool):
 
     show_status(reg_line + "\n" + scan_line)
 
+VOICE_CFG_FILE = BASE_DIR / "voice" / "voice_config.json"
+
+def _voice_load_cfg() -> dict:
+    try:
+        return json.loads(VOICE_CFG_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+def _voice_save_cfg(cfg: dict) -> bool:
+    try:
+        VOICE_CFG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = VOICE_CFG_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(VOICE_CFG_FILE)
+        return True
+    except Exception:
+        return False
+
+def _voice_get_mode() -> str:
+    m = str(_voice_load_cfg().get("mode") or "deaf").strip()
+    return m if m in ("deaf", "name_listen", "conversation", "llm_dummy") else "deaf"
+
+def _voice_set_mode(mode: str) -> bool:
+    if mode not in ("deaf", "name_listen"):
+        return False
+    cfg = _voice_load_cfg()
+    cfg["mode"] = mode
+    return _voice_save_cfg(cfg)
+
 # ---- Grid functions ----
 def function00():
     messagebox.showinfo("Information", "This is a Major Alert!")
@@ -292,7 +321,22 @@ def function13():
     show_status("Test beep: OK" if ok else f"Test beep: FAIL\n{detail}", log=True)
 
 def function20():
-    show_status("Hello B20!")
+    """
+    GUI voice toggle:
+      - if deaf -> name_listen
+      - else    -> deaf
+    (We do NOT start/stop systemd service here.)
+    """
+    def worker():
+        cur = _voice_get_mode()
+        target = "name_listen" if cur == "deaf" else "deaf"
+        ok = _voice_set_mode(target)
+        if ok:
+            root.after(0, lambda: show_status(f"VOICE: mode {cur} -> {target}", log=True))
+        else:
+            root.after(0, lambda: show_status("VOICE: failed to write voice_config.json", log=True))
+
+    threading.Thread(target=worker, daemon=True).start()
 
 def function23():
     show_status("Hello B23!")
@@ -379,7 +423,7 @@ button10.grid(row=1, column=0, sticky="EWNS")
 button13 = ttk.Button(root, text="Beep Test", command=function13)
 button13.grid(row=1, column=3, sticky="EWNS")
 
-button20 = ttk.Button(root, text="B20", command=function20)
+button20 = ttk.Button(root, text="Voice: Deaf/Listen", command=function20)
 button20.grid(row=2, column=0, sticky="EWNS")
 
 button23 = ttk.Button(root, text="B23", command=function23)

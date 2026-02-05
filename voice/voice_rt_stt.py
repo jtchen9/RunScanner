@@ -225,7 +225,7 @@ def stt_loop_once(cfg: Dict[str, Any], stt: VoskSTT) -> Tuple[bool, str, str]:
     mic = (cfg.get("mic_dev") or "plughw:1,0")
     rate = int(cfg.get("sample_rate") or 16000)
     ch = int(cfg.get("channels") or 1)
-    dur = int(cfg.get("chunk_sec") or 2)
+    dur = int(cfg.get("chunk_sec") or 3)
 
     ok, detail = record_wav(CHUNK_WAV, mic, rate, ch, dur)
     if not ok:

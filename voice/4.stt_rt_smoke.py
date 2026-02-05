@@ -20,7 +20,7 @@ def main():
         "mic_dev": "plughw:1,0",
         "sample_rate": 16000,
         "channels": 1,
-        "chunk_sec": 2,
+        "chunk_sec": 3,
     }
 
     # Option A: match only this robot’s own name (recommended for NAME_LISTEN)

@@ -223,10 +223,10 @@ Error → NAME_LISTENv
 ## NMS Commands (Wave-2)
 
 Command Summary
-Command Category Agent GUI Notes
-VOICE.MODE.SET voice ✅ ❌ DEAF / NAME_LISTEN only
-VOICE.SCRIPT.SET voice ✅ ❌ Scenario control
-VOICE.TEST.PROMPT voice ❌ ✅ Debug only
+Command          Category   Agent  GUI   Notes
+VOICE.MODE.SET    voice     ✅    ❌    DEAF / NAME_LISTEN only
+VOICE.SCRIPT.SET  voice     ✅    ❌    Scenario control
+VOICE.TEST.PROMPT voice     ❌    ✅    Debug only
 
 VOICE.START / VOICE.STOP are no longer scenario tools
 Voice service lifecycle is handled by systemd
@@ -259,7 +259,7 @@ Uses its own assigned name as wake-name
 
 **Observable:**
 systemctl status scanner-voice.service
-/home/pi/\_RunScanner/voice/voice.log
+/home/pi/_RunScanner/voice/voice.log
 
 ---
 
@@ -332,15 +332,75 @@ Replace the scripted phrase–response table used in CONVERSATION mode.
 {
   "commands": [
     {
+      "id": "how_are_you",
+      "enabled": true,
+
       "phrase": "How are you",
-      "reply": "System is operating normally.",
-      "action": "status.report"
+      "match": {
+        "type": "contains",
+        "normalize": true,
+        "fuzzy": {
+          "enabled": false,
+          "min_ratio": 0.70
+        }
+      },
+
+      "reply": {
+        "say": "Let me check the operating status.",
+        "lead_silence_ms": 300,
+        "volume": 90
+      },
+
+      "actions": [
+        {
+          "type": "local.status.report",
+          "args": {
+            "speak_result": true,
+            "ok_text": "All systems are operating normally.",
+            "err_prefix": "Warning. "
+          }
+        }
+      ]
     },
+
     {
+      "id": "lets_talk",
+      "enabled": true,
+
       "phrase": "Let's talk",
-      "reply": "OK.",
-      "action": "enter.llm"
+      "match": {
+        "type": "contains",
+        "normalize": true,
+        "fuzzy": {
+          "enabled": false,
+          "min_ratio": 0.70
+        }
+      },
+
+      "reply": {
+        "say": "",
+        "lead_silence_ms": 300,
+        "volume": 90
+      },
+
+      "actions": [
+        {
+          "type": "enter.llm",
+          "args": {
+            "say_on_enter": true
+          }
+        }
+      ]
     }
+  ]
+}
+
+```
+```JSON
+{
+  "commands": [
+    { "phrase": "How are you", "reply": "Let me check the operating status.", "action": "status.report" },
+    { "phrase": "Let's talk", "reply": "", "action": "enter.llm" }
   ]
 }
 ```

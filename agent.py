@@ -48,11 +48,15 @@ from config import SYSTEMCTL, SUDO, SERVICE_SCANNER_POLLER, SERVICE_AVSTREAM
 from config import (
     MPV_BIN, AUDIO_AO_DEFAULT, AUDIO_DEVICE_DEFAULT, AUDIO_VOLUME_DEFAULT,
 )
-
 import requests
-
 from bundle_manager import apply_bundle
-
+# Voice (Wave-2)
+from voice.voice_agent_api import (
+    exec_voice_start,
+    exec_voice_stop,
+    exec_voice_mode_set,
+    exec_voice_script_set,
+)
 
 REGISTER_PY = BASE_DIR / "register.py"
 LOG_PATH = BASE_DIR / "agent.log"

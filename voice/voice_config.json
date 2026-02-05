@@ -1,6 +1,25 @@
 {
-  "mode": "deaf",
+  "mode": "name_listen",
   "conversation_timeout_sec": 20,
   "llm_timeout_sec": 30,
-  "script": []
+  "script": [],
+
+  "stt_engine": "vosk",
+  "vosk_model_dir": "/home/pi/_RunScanner/voice/models/vosk-model-small-en-us-0.15",
+  "mic_dev": "plughw:1,0",
+  "sample_rate": 16000,
+  "channels": 1,
+  "chunk_sec": 2,
+
+  "tts_volume": 90,
+
+  "test_easy_match": true,
+  "test_min_chars": 1,
+  "test_wake_always": true,
+  "test_phrase_always": true,
+  
+  "deaf_enter_say": "I will stay quiet.",
+  "name_listen_enter_say": "I am listening.",
+  "conversation_enter_say": "How can I help you?",
+  "llm_enter_say": "Do you want to chat with me?"
 }
