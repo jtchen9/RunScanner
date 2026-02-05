@@ -34,6 +34,7 @@ from voice_common import (
     match_wake_name,
 )
 from voice_rt_stt import init_vosk, stt_loop_once
+from voice_llm import llm_exchange
 
 HEARTBEAT_SEC = 10
 IDLE_SLEEP_SEC = 0.05
@@ -213,6 +214,7 @@ def main() -> None:
     mode_enter_ts = time.time()
     last_hb = 0.0
     conv_last_activity_ts = mode_enter_ts
+    llm_last_activity_ts = mode_enter_ts
 
     while True:
         try:
@@ -233,6 +235,8 @@ def main() -> None:
                 last_mode = mode
                 if mode == "conversation":
                     conv_last_activity_ts = time.time()
+                elif mode == "llm_dummy":
+                    llm_last_activity_ts = time.time()
 
             # --- Heartbeat ---
             now = time.time()
@@ -281,7 +285,6 @@ def main() -> None:
                     if matched:
                         # Enter conversation (this will also speak conversation_enter_say)
                         mode, mode_enter_ts = _enter_mode(cfg, "conversation", reason="wake_match")
-                        conv_last_activity_ts = mode_enter_ts
                 else:
                     voice_log(f"RT_STT: chunk error: {raw}")
                     time.sleep(0.2)
@@ -295,7 +298,6 @@ def main() -> None:
                 if (time.time() - conv_last_activity_ts) >= conv_to:
                     voice_log("VOICE: conversation timeout -> name_listen")
                     mode, mode_enter_ts = _enter_mode(cfg, "name_listen", reason="conversation_timeout")
-                    conv_last_activity_ts = mode_enter_ts
                     continue                    
 
                 ok, raw, norm = stt_loop_once(cfg, stt)
@@ -354,7 +356,6 @@ def main() -> None:
                         # 3) Only way to enter llm_dummy
                         if action == "enter.llm":
                             mode, mode_enter_ts = _enter_mode(cfg, "llm_dummy", reason="enter_llm_action")
-
                         break
                 else:
                     voice_log(f"RT_STT: chunk error: {raw}")
@@ -363,15 +364,46 @@ def main() -> None:
                 time.sleep(IDLE_SLEEP_SEC)
                 continue
 
-            # LLM_DUMMY: just wait; timeout -> name_listen
+            # LLM_DUMMY (Wave-3): STT -> LLM -> TTS; timeout -> name_listen
             if mode == "llm_dummy":
                 llm_to = int(cfg.get("llm_timeout_sec") or 30)
-                if (time.time() - mode_enter_ts) >= llm_to:
+
+                # timeout based on last activity (NOT entry time)
+                if (time.time() - llm_last_activity_ts) >= llm_to:
                     voice_log("VOICE: llm timeout -> name_listen")
                     mode, mode_enter_ts = _enter_mode(cfg, "name_listen", reason="llm_timeout")
                     continue
 
-                time.sleep(0.2)
+                ok, raw, norm = stt_loop_once(cfg, stt)
+                if ok:
+                    norm = normalize_text(norm)
+                    voice_log(f"RT_STT: heard raw='{raw}' norm='{norm}' (llm_dummy)")
+
+                    # Consider "activity" only when norm has enough chars
+                    test_easy = _cfg_bool(cfg, "test_easy_match", False)
+                    min_chars = _cfg_int(cfg, "test_min_chars", 1) if test_easy else 3
+
+                    if len(norm) >= min_chars:
+                        # user activity keeps LLM session alive
+                        llm_last_activity_ts = time.time()
+
+                        # Send to LLM
+                        ok2, reply_or_err = llm_exchange(norm)
+                        if ok2:
+                            if reply_or_err.strip():
+                                _speak_cfg(cfg, reply_or_err.strip(), lead_ms=250)
+                                # assistant activity also keeps LLM session alive
+                                llm_last_activity_ts = time.time()
+                        else:
+                            voice_log(f"LLM: error {reply_or_err}")
+                            _speak_cfg(cfg, "Sorry, I cannot reach the server right now.", lead_ms=250)
+                            llm_last_activity_ts = time.time()
+
+                else:
+                    voice_log(f"RT_STT: chunk error: {raw}")
+                    time.sleep(0.2)
+
+                time.sleep(IDLE_SLEEP_SEC)
                 continue
 
             # Unknown -> safety

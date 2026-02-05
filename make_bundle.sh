@@ -74,6 +74,9 @@ BASE_DIR="/home/pi/_RunScanner"
 BUNDLE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 REQUIRED_BUNDLE_FILES=(
+  av
+  Docu
+  voice
   agent.py
   bundle_manager.py
   config.py
@@ -82,18 +85,17 @@ REQUIRED_BUNDLE_FILES=(
   register.py
   scan_payload.py
   scan_wifi.sh
-  scenario_commands.md
   uploader.py
   windows.py
 )
 
 KEEP_RUNTIME_FILES=(
+  MoveOut
+  TestCodes
   bundles
   make_bundle.sh
-  MoveOut
   nms_base.txt
   scanner_name.txt
-  TestCodes
 )
 
 echo "[install.sh] Verifying bundle contents..."

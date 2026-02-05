@@ -18,9 +18,26 @@ from config import (
     TIME_FMT,
     local_ts,
 )
-
+VOICE_CFG = BASE_DIR / "voice" / "voice_config.json"
 HTTP_TIMEOUT_SEC = 6
 
+
+def update_voice_llm_session(scanner: str) -> None:
+    try:
+        p = VOICE_CFG
+        cfg = {}
+        if p.exists():
+            cfg = json.loads(p.read_text(encoding="utf-8") or "{}")
+
+        llm = cfg.get("llm") or {}
+        llm["session_id"] = scanner
+        cfg["llm"] = llm
+
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(p)
+    except Exception:
+        pass
 
 # ------------------------------------------------------------------
 # Persistence (telemetry only; NOT control)
@@ -173,7 +190,8 @@ def main() -> int:
             )
             print(f"[register] ERROR: cannot write scanner_name.txt: {e}", file=sys.stderr)
             return 6
-
+        
+        update_voice_llm_session(scanner)
         write_last_register(
             status="ok",
             detail=f"registered via {nms_base}",

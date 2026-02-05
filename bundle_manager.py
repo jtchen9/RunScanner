@@ -25,7 +25,6 @@ import requests
 BUNDLES_DIR = BASE_DIR / "bundles"
 ACTIVE_LINK = BUNDLES_DIR / "active"
 ACTIVE_BUNDLE_FILE = BUNDLES_DIR / "active_bundle.txt"
-
 HTTP_TIMEOUT = 30
 
 
@@ -42,21 +41,17 @@ def _run(cmd, timeout=30) -> Tuple[bool, str]:
     except subprocess.CalledProcessError as e:
         return False, (e.stderr or e.stdout or "").strip()
 
-
 def _systemctl(action: str, service: str) -> None:
     # best-effort; try normal then sudo -n
     _run([SYSTEMCTL, action, service])
     _run([SUDO, "-n", SYSTEMCTL, action, service])
 
-
 def stop_all_services() -> None:
     _systemctl("stop", SERVICE_SCANNER_POLLER)
     _systemctl("stop", SERVICE_UPLOADER)
 
-
 def restart_uploader() -> None:
     _systemctl("restart", SERVICE_UPLOADER)
-
 
 def _download_bundle(url: str, dst_zip: Path) -> None:
     r = requests.get(url, stream=True, timeout=HTTP_TIMEOUT)
@@ -66,11 +61,9 @@ def _download_bundle(url: str, dst_zip: Path) -> None:
             if chunk:
                 f.write(chunk)
 
-
 def _extract_zip(src_zip: Path, dst_dir: Path) -> None:
     with zipfile.ZipFile(src_zip, "r") as zf:
         zf.extractall(dst_dir)
-
 
 def _run_install_hook(bundle_dir: Path) -> None:
     hook = bundle_dir / "install.sh"
@@ -81,7 +74,6 @@ def _run_install_hook(bundle_dir: Path) -> None:
     ok, out = _run(["/usr/bin/bash", str(hook)], timeout=180)
     if not ok:
         raise RuntimeError(f"install.sh failed: {out}")
-
 
 def apply_bundle(bundle_id: str, url: str) -> Tuple[bool, str]:
     """

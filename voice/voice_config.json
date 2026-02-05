@@ -4,35 +4,41 @@
   "llm_timeout_sec": 30,
   "script": [
     {
-        "phrase": "how are you",
-        "reply": "Let me check the operating status.",
-        "action": "status.report"
+      "phrase": "lets talk",
+      "reply": "",
+      "action": "enter.llm"
     },
     {
-        "phrase": "lets talk",
-        "reply": "",
-        "action": "enter.llm"
+      "phrase": "how are you",
+      "reply": "Let me check the operating status.",
+      "action": "status.report"
     }
-    ],
-    
+  ],
   "stt_engine": "vosk",
   "vosk_model_dir": "/home/pi/_RunScanner/voice/models/vosk-model-small-en-us-0.15",
   "mic_dev": "plughw:1,0",
   "sample_rate": 16000,
   "channels": 1,
-  "chunk_sec": 2,
-
+  "chunk_sec": 3,
   "tts_volume": 130,
   "tts_rate": 135,
   "tts_amp": 200,
-
   "test_easy_match": true,
   "test_min_chars": 1,
   "test_wake_always": true,
   "test_phrase_always": true,
-  
   "deaf_enter_say": "I will stay quiet.",
   "name_listen_enter_say": "I am listening.",
   "conversation_enter_say": "How can I help you?",
-  "llm_enter_say": "Do you want to chat with me?"
+  "llm_enter_say": "Do you want to chat with me?",
+  "llm": {
+    "provider": "openai",
+    "base_url": "https://api.openai.com/v1/responses",
+    "model": "gpt-4.1-mini",
+    "api_key_file": "/home/pi/.keys/openai.key",
+    "timeout_sec": 30,
+    "temperature": 0.4,
+    "max_output_tokens": 250,
+    "session_id": "twin-scout-alpha"
+  }
 }
