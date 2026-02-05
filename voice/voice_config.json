@@ -2,8 +2,19 @@
   "mode": "name_listen",
   "conversation_timeout_sec": 20,
   "llm_timeout_sec": 30,
-  "script": [],
-
+  "script": [
+    {
+        "phrase": "how are you",
+        "reply": "Let me check the operating status.",
+        "action": "status.report"
+    },
+    {
+        "phrase": "lets talk",
+        "reply": "",
+        "action": "enter.llm"
+    }
+    ],
+    
   "stt_engine": "vosk",
   "vosk_model_dir": "/home/pi/_RunScanner/voice/models/vosk-model-small-en-us-0.15",
   "mic_dev": "plughw:1,0",
@@ -11,7 +22,9 @@
   "channels": 1,
   "chunk_sec": 2,
 
-  "tts_volume": 90,
+  "tts_volume": 130,
+  "tts_rate": 135,
+  "tts_amp": 200,
 
   "test_easy_match": true,
   "test_min_chars": 1,

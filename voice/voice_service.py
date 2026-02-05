@@ -24,8 +24,7 @@ from __future__ import annotations
 
 import time
 import subprocess
-from typing import Dict, Any, Optional, Tuple
-
+from typing import Dict, Any, Tuple
 from voice_common import (
     read_identity,
     load_voice_config,
@@ -34,7 +33,6 @@ from voice_common import (
     normalize_text,
     match_wake_name,
 )
-
 from voice_rt_stt import init_vosk, stt_loop_once
 
 HEARTBEAT_SEC = 10
@@ -57,8 +55,10 @@ def _cfg_str(cfg: Dict[str, Any], key: str, default: str = "") -> str:
     return str(s).strip()
 
 def _speak_cfg(cfg: Dict[str, Any], text: str, *, lead_ms: int = 600) -> Tuple[bool, str]:
-    vol = _cfg_int(cfg, "tts_volume", 90)
-    return _speak(text, lead_ms=lead_ms, vol=vol)
+    vol  = _cfg_int(cfg, "tts_volume", 120)   # mpv gain
+    rate = _cfg_int(cfg, "tts_rate", 135)     # espeak speed
+    amp  = _cfg_int(cfg, "tts_amp", 200)      # espeak amplitude
+    return _speak(text, lead_ms=lead_ms, vol=vol, rate=rate, amp=amp)
 
 def _mode_enter_prompt(cfg: Dict[str, Any], mode: str) -> str:
     if mode == "deaf":
@@ -109,13 +109,29 @@ def _callsign_from_identity(ident: str) -> str:
         return ""
     return toks[-1]
 
-def _speak(text: str, *, lead_ms: int = 600, vol: int = 90) -> Tuple[bool, str]:
+def _speak(
+    text: str,
+    *,
+    lead_ms: int = 600,
+    vol: int = 120,
+    rate: int = 135,
+    amp: int = 200,
+) -> Tuple[bool, str]:
     text = (text or "").strip()
     if not text:
         return True, "skip empty"
+
     try:
         cp = subprocess.run(
-            ["/usr/bin/bash", TTS_SCRIPT, text, str(int(lead_ms)), str(int(vol))],
+            [
+                "/usr/bin/bash",
+                TTS_SCRIPT,
+                text,
+                str(int(lead_ms)),
+                str(int(vol)),
+                str(int(rate)),
+                str(int(amp)),
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -196,6 +212,7 @@ def main() -> None:
     last_mode = None
     mode_enter_ts = time.time()
     last_hb = 0.0
+    conv_last_activity_ts = mode_enter_ts
 
     while True:
         try:
@@ -214,6 +231,8 @@ def main() -> None:
             if mode != last_mode:
                 voice_log(f"VOICE: mode -> {mode}")
                 last_mode = mode
+                if mode == "conversation":
+                    conv_last_activity_ts = time.time()
 
             # --- Heartbeat ---
             now = time.time()
@@ -262,6 +281,7 @@ def main() -> None:
                     if matched:
                         # Enter conversation (this will also speak conversation_enter_say)
                         mode, mode_enter_ts = _enter_mode(cfg, "conversation", reason="wake_match")
+                        conv_last_activity_ts = mode_enter_ts
                 else:
                     voice_log(f"RT_STT: chunk error: {raw}")
                     time.sleep(0.2)
@@ -272,15 +292,21 @@ def main() -> None:
             # CONVERSATION: match scripted phrases; timeout -> name_listen
             if mode == "conversation":
                 conv_to = int(cfg.get("conversation_timeout_sec") or 20)
-                if (time.time() - mode_enter_ts) >= conv_to:
+                if (time.time() - conv_last_activity_ts) >= conv_to:
                     voice_log("VOICE: conversation timeout -> name_listen")
                     mode, mode_enter_ts = _enter_mode(cfg, "name_listen", reason="conversation_timeout")
+                    conv_last_activity_ts = mode_enter_ts
                     continue                    
 
                 ok, raw, norm = stt_loop_once(cfg, stt)
                 if ok:
                     norm = normalize_text(norm)
                     voice_log(f"RT_STT: heard raw='{raw}' norm='{norm}'")
+                    # any usable speech keeps conversation alive
+                    test_easy = _cfg_bool(cfg, "test_easy_match", False)
+                    min_chars = _cfg_int(cfg, "test_min_chars", 1) if test_easy else 3
+                    if len(norm) >= min_chars:
+                        conv_last_activity_ts = time.time()
 
                     script = cfg.get("script") or []
 
@@ -317,13 +343,13 @@ def main() -> None:
 
                         # 1) Speak reply (if provided)
                         if reply:
-                            _speak(reply, lead_ms=300, vol=int(cfg.get("tts_volume") or 90))
+                            _speak_cfg(cfg, reply, lead_ms=300)
 
                         # 2) Optional action: status.report (Wave-2 useful)
                         if action == "status.report":
-                            _speak("Let me check the operation condition.", lead_ms=300, vol=int(cfg.get("tts_volume") or 90))
+                            _speak_cfg(cfg, "Let me check the operation condition.", lead_ms=300)
                             summary = _run_status_summary()
-                            _speak(summary, lead_ms=300, vol=int(cfg.get("tts_volume") or 90))
+                            _speak_cfg(cfg, summary, lead_ms=300)
 
                         # 3) Only way to enter llm_dummy
                         if action == "enter.llm":
@@ -350,9 +376,7 @@ def main() -> None:
 
             # Unknown -> safety
             voice_log(f"VOICE: unknown mode '{mode}' -> name_listen")
-            mode = "name_listen"
-            mode_enter_ts = time.time()
-            _enter_mode(cfg,"name_listen", reason="unknown_mode")
+            mode, mode_enter_ts = _enter_mode(cfg, "name_listen", reason="unknown_mode")
 
         except Exception as e:
             # Optional safety: ANY -> name_listen on error
