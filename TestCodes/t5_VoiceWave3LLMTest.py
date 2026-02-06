@@ -192,7 +192,7 @@ def read_text_file(p: Path) -> str:
 def preflight_llm_exchange() -> None:
     # Import here so the test can still print useful info if import fails.
     try:
-        from voice_llm import llm_exchange  # type: ignore
+        from voice.voice_llm import llm_exchange  # type: ignore
     except Exception as e:
         raise RuntimeError(f"cannot import voice_llm.llm_exchange: {type(e).__name__}: {e}")
 
@@ -370,7 +370,6 @@ def main() -> int:
         stop_agent_cleanup()
         ensure_services_clean()
         return 1
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

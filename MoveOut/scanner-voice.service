@@ -8,10 +8,11 @@ Wants=network-online.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/_RunScanner
-ExecStart=/usr/bin/python3 /home/pi/_RunScanner/voice/voice_service.py
+ExecStart=/usr/bin/python3 -m voice.voice_service
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/pi/_RunScanner in scanner-voice.service
 
 # Keep logs in our own file; systemd journal still has them too
 StandardOutput=journal
