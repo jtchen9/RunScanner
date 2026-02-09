@@ -19,7 +19,7 @@
     "mic_dev": "plughw:1,0",
     "sample_rate": 16000,
     "channels": 1,
-    "chunk_sec": 3,
+    "chunk_sec": 1,
     "tts_volume": 130,
     "tts_rate": 135,
     "tts_amp": 200,
@@ -40,5 +40,11 @@
     "temperature": 0.4,
     "max_output_tokens": 250,
     "session_id": "twin-scout-alpha"
-    }
+    },
+    "utterance_max_chunks": 8,
+    "utterance_silence_chunks": 2,
+    "utterance_min_chars": 2,
+    "llm_min_chars": 8,
+    "utterance_joiner": " ",
+    "utterance_speech_min_chars": 1    
 }

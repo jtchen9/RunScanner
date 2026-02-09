@@ -42,9 +42,10 @@ IDLE_SLEEP_SEC = 0.05
 TTS_SCRIPT = "/home/pi/_RunScanner/av/tts_say.sh"
 
 def _cue_listen(cfg: Dict[str, Any]) -> None:
-    # Uses your known-working TTS path.
-    # Very short token so it won't annoy you.
-    _speak_cfg(cfg, "go", lead_ms=250)
+    # short audio cue before recording (uses working TTS path)
+    t0 = time.time()
+    ok, detail = _speak_cfg(cfg, "go", lead_ms=250)
+    voice_log(f"CUE: done ok={ok} dt={time.time()-t0:.2f}s detail={detail}")
 
 def _cfg_int(cfg: Dict[str, Any], key: str, default: int) -> int:
     try:
@@ -99,7 +100,7 @@ def _enter_mode(cfg: Dict[str, Any], new_mode: str, *, reason: str = "") -> Tupl
 
 def _sanitize_mode(mode: str) -> str:
     m = (mode or "").strip()
-    if m in ("deaf", "name_listen", "conversation", "llm_dummy"):
+    if m in ("deaf", "name_listen", "conversation", "llm_dummy", "llm_browser"):
         return m
     return "deaf"
 
@@ -190,6 +191,87 @@ def _phrase_match(cfg: Dict[str, Any], norm_text: str, phrase: str) -> bool:
 
     p = normalize_text(phrase)
     return bool(p) and p in norm_text
+
+def _listen_utterance(cfg: Dict[str, Any], stt, *, label: str = "") -> Tuple[bool, str, str]:
+    """
+    Tier-2: collect multiple STT chunks into one utterance until we hit
+    consecutive silence chunks or max_chunks.
+
+    Returns: (ok, raw_joined, norm_joined)
+      - ok=False means: we ended with no usable speech (treat as "no utterance")
+    """
+    max_chunks   = _cfg_int(cfg, "utterance_max_chunks", 4)
+    silence_need = _cfg_int(cfg, "utterance_silence_chunks", 1)
+    utter_min    = _cfg_int(cfg, "utterance_min_chars", 2)
+    joiner = str(cfg.get("utterance_joiner", " "))    # DO NOT strip: a single-space joiner is valid
+    if joiner == "":
+        joiner = " "
+
+    # Separate threshold: what counts as "speech chunk" vs "silence-ish"
+    # Keep small so we don't miss short-but-real chunks like "yes", "no".
+    speech_min = _cfg_int(cfg, "utterance_speech_min_chars", 1)
+
+    raw_parts: list[str] = []
+    norm_parts: list[str] = []
+
+    silent_run = 0
+    stop_reason = "max_chunks"
+
+    for i in range(max_chunks):
+        ok, raw, norm = stt_loop_once(cfg, stt)
+        if not ok:
+            voice_log(f"UTTERANCE[{label}]: chunk_error i={i} err='{raw}'")
+            silent_run += 1
+            if silent_run >= silence_need:
+                stop_reason = "error_as_silence"
+                break
+            continue
+
+        raw = (raw or "").strip()
+        norm = normalize_text(norm).strip()
+
+        # treat short / empty as silence-ish
+        if len(norm) < speech_min:
+            silent_run += 1
+            voice_log(f"UTTERANCE[{label}]: silence i={i} silent_run={silent_run} raw='{raw}' norm='{norm}'")
+            if silent_run >= silence_need:
+                stop_reason = "silence"
+                break
+            continue
+
+        # speech chunk
+        silent_run = 0
+        raw_parts.append(raw)
+        norm_parts.append(norm)
+        voice_log(f"UTTERANCE[{label}]: speech i={i} raw='{raw}' norm='{norm}'")
+
+        # Optional early stop phrases (keep minimal)
+        if norm in ("stop", "stop now", "that is all", "thanks"):
+            stop_reason = "stop_phrase"
+            break
+
+    raw_joined = joiner.join([p for p in raw_parts if p]).strip()
+    norm_joined = joiner.join([p for p in norm_parts if p]).strip()
+
+    # Summary log (this is the money log)
+    voice_log(
+        f"UTTERANCE[{label}]: done reason={stop_reason} "
+        f"chunks={len(norm_parts)} silent_run={silent_run} "
+        f"raw_len={len(raw_joined)} norm_len={len(norm_joined)}"
+    )
+
+    # IMPORTANT: ok should be False if no usable utterance
+    if len(norm_joined) < utter_min:
+        return False, raw_joined, norm_joined
+
+    return True, raw_joined, norm_joined
+
+def _should_exit_llm(norm: str) -> bool:
+    s = normalize_text(norm)
+    return any(p in s for p in (
+        "stop chatting", "exit", "quit", "goodbye", "stop", "cancel"
+    ))
+
 
 def main() -> None:
     ident = read_identity() or "UNKNOWN"
@@ -305,6 +387,10 @@ def main() -> None:
                     mode, mode_enter_ts = _enter_mode(cfg, "name_listen", reason="conversation_timeout")
                     continue                    
 
+                # Audible cue before recording
+                _cue_listen(cfg)
+                time.sleep(0.25)                
+                
                 ok, raw, norm = stt_loop_once(cfg, stt)
                 if ok:
                     norm = normalize_text(norm)
@@ -373,43 +459,69 @@ def main() -> None:
             if mode == "llm_dummy":
                 llm_to = int(cfg.get("llm_timeout_sec") or 30)
 
-                # timeout based on last activity (NOT entry time)
+                # Timeout based on last real activity (utterance or reply)
                 if (time.time() - llm_last_activity_ts) >= llm_to:
                     voice_log("VOICE: llm timeout -> name_listen")
                     mode, mode_enter_ts = _enter_mode(cfg, "name_listen", reason="llm_timeout")
                     continue
 
-                ok, raw, norm = stt_loop_once(cfg, stt)
-                if ok:
-                    norm = normalize_text(norm)
-                    voice_log(f"RT_STT: heard raw='{raw}' norm='{norm}' (llm_dummy)")
+                # Keep-alive so thinking time doesn't trigger timeout
+                llm_last_activity_ts = time.time()
 
-                    # Consider "activity" only when norm has enough chars
-                    test_easy = _cfg_bool(cfg, "test_easy_match", False)
-                    min_chars = _cfg_int(cfg, "test_min_chars", 1) if test_easy else 3
-
-                    if len(norm) >= min_chars:
-                        # user activity keeps LLM session alive
-                        llm_last_activity_ts = time.time()
-
-                        # Send to LLM
-                        ok2, reply_or_err = llm_exchange(norm)
-                        if ok2:
-                            if reply_or_err.strip():
-                                _speak_cfg(cfg, reply_or_err.strip(), lead_ms=250)
-                                # assistant activity also keeps LLM session alive
-                                llm_last_activity_ts = time.time()
-                        else:
-                            voice_log(f"LLM: error {reply_or_err}")
-                            _speak_cfg(cfg, "Sorry, I cannot reach the server right now.", lead_ms=250)
-                            llm_last_activity_ts = time.time()
-
-                else:
-                    voice_log(f"RT_STT: chunk error: {raw}")
-                    time.sleep(0.2)
-
+                # Audible cue before recording
                 _cue_listen(cfg)
-                time.sleep(0.10)
+                time.sleep(0.25)
+
+                # Collect Tier-2 utterance (multi-chunk)
+                ok_u, raw, norm = _listen_utterance(cfg, stt, label="llm_dummy")
+
+                if not ok_u:
+                    voice_log("RT_STT: no utterance (silence)")
+                    time.sleep(IDLE_SLEEP_SEC)
+                    continue
+
+                voice_log(f"RT_STT: utterance raw='{raw}' norm='{norm}' (llm_dummy)")
+                llm_last_activity_ts = time.time()
+
+                # Exit phrases (user wants out of chat)
+                if _should_exit_llm(norm):
+                    _speak_cfg(cfg, "OK, exiting chat.", lead_ms=250)
+                    mode, mode_enter_ts = _enter_mode(cfg, "name_listen", reason="llm_exit_phrase")
+                    llm_last_activity_ts = time.time()
+                    continue
+
+                # Guard: minimum length required to justify an LLM call
+                llm_min_chars = _cfg_int(cfg, "llm_min_chars", 8)
+                if len(norm) < llm_min_chars:
+                    voice_log(
+                        f"RT_STT: utterance too short for LLM "
+                        f"(len={len(norm)} < {llm_min_chars}) -> skip"
+                    )
+                    time.sleep(IDLE_SLEEP_SEC)
+                    continue
+
+                # ---- LLM call (ONE time only) ----
+                t0 = time.time()
+                voice_log(f"LLM: request start chars={len(norm)} text='{norm[:60]}'")
+                ok2, reply_or_err = llm_exchange(norm)
+                dt = time.time() - t0
+
+                reply_text = (reply_or_err or "").strip()
+                voice_log(f"LLM: request done ok={ok2} dt={dt:.2f}s out_len={len(reply_text)}")
+
+                if ok2:
+                    if reply_text:
+                        t1 = time.time()
+                        ok3, detail3 = _speak_cfg(cfg, reply_text, lead_ms=250)
+                        voice_log(
+                            f"TTS: done ok={ok3} dt={time.time()-t1:.2f}s detail={detail3}"
+                        )
+                        llm_last_activity_ts = time.time()
+                else:
+                    voice_log(f"LLM: error detail='{reply_text[:160]}'")
+                    _speak_cfg(cfg, "Sorry, I cannot reach the server right now.", lead_ms=250)
+                    llm_last_activity_ts = time.time()
+
                 time.sleep(IDLE_SLEEP_SEC)
                 continue
 

@@ -105,7 +105,7 @@ def llm_exchange(user_text: str) -> Tuple[bool, str]:
 
     system_text = (
         "You are a small helpful voice assistant running on a Raspberry Pi robot. "
-        "Be brief, clear, and practical. No long explanations unless asked."
+        "Reply in ONE short sentence unless I explicitly ask for details."
     )
 
     def _do_request(prev: str) -> Tuple[bool, str, Optional[Dict[str, Any]], int, str]:
