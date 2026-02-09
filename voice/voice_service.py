@@ -41,6 +41,11 @@ IDLE_SLEEP_SEC = 0.05
 
 TTS_SCRIPT = "/home/pi/_RunScanner/av/tts_say.sh"
 
+def _cue_listen(cfg: Dict[str, Any]) -> None:
+    # Uses your known-working TTS path.
+    # Very short token so it won't annoy you.
+    _speak_cfg(cfg, "go", lead_ms=250)
+
 def _cfg_int(cfg: Dict[str, Any], key: str, default: int) -> int:
     try:
         return int(cfg.get(key, default))
@@ -403,6 +408,8 @@ def main() -> None:
                     voice_log(f"RT_STT: chunk error: {raw}")
                     time.sleep(0.2)
 
+                _cue_listen(cfg)
+                time.sleep(0.10)
                 time.sleep(IDLE_SLEEP_SEC)
                 continue
 
