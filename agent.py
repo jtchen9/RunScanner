@@ -56,6 +56,8 @@ from voice.voice_agent_api import (
     exec_voice_stop,
     exec_voice_mode_set,
     exec_voice_script_set,
+    exec_voice_llm_config_set,
+    exec_voice_llm_test,
 )
 
 REGISTER_PY = BASE_DIR / "register.py"
@@ -84,6 +86,15 @@ from voice.voice_common import (
     update_voice_config,
     validate_script,
 )
+VOICE_ACTIONS = {
+    "voice.start": lambda args: exec_voice_start(args),
+    "voice.stop":  lambda args: exec_voice_stop(),
+    "voice.mode.set": lambda args: exec_voice_mode_set(args),
+    "voice.script.set": lambda args: exec_voice_script_set(args),
+
+    # Wave-3
+    "voice.llm.config.set": lambda args: exec_voice_llm_config_set(args),
+}
 
 
 def log(msg: str) -> None:
@@ -530,21 +541,28 @@ def dispatch(nms_base: str, scanner: str, cmd_fields: Dict[str, Any]) -> Tuple[s
         ok, detail = exec_tts_say(scanner, args)
         return ("ok" if ok else "error"), detail
 
-    if action == "voice.start":
-        ok, detail = exec_voice_start(args)
+    if category == "voice":
+        fn = VOICE_ACTIONS.get(action)
+        if not fn:
+            return "error", f"unknown voice action: {action}"
+        ok, detail = fn(args)
         return ("ok" if ok else "error"), detail
+    
+    # if action == "voice.stop":
+    #         ok, detail = exec_voice_stop()
+    #         return ("ok" if ok else "error"), detail
 
-    if action == "voice.stop":
-        ok, detail = exec_voice_stop()
-        return ("ok" if ok else "error"), detail
+    # if action == "voice.start":
+    #     ok, detail = exec_voice_start(args)
+    #     return ("ok" if ok else "error"), detail
 
-    if action == "voice.mode.set":
-        ok, detail = exec_voice_mode_set(args)
-        return ("ok" if ok else "error"), detail
+    # if action == "voice.mode.set":
+    #     ok, detail = exec_voice_mode_set(args)
+    #     return ("ok" if ok else "error"), detail
 
-    if action == "voice.script.set":
-        ok, detail = exec_voice_script_set(args)
-        return ("ok" if ok else "error"), detail
+    # if action == "voice.script.set":
+    #     ok, detail = exec_voice_script_set(args)
+    #     return ("ok" if ok else "error"), detail
 
     return "error", f"unknown action={action}"
 

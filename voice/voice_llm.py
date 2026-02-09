@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
+import json, sys
 import time
 import requests
 from pathlib import Path
 from typing import Any, Dict, Tuple, Optional
+VOICE_DIR = Path(__file__).resolve().parent
+if str(VOICE_DIR) not in sys.path:
+    sys.path.insert(0, str(VOICE_DIR))
 from voice_common import voice_log, load_voice_config
 import re
 
@@ -168,6 +171,66 @@ def llm_exchange(user_text: str) -> Tuple[bool, str]:
     if not txt:
         txt = "I do not have an answer yet."
     return True, txt
+
+def llm_runtime_ready(test_prompt: str = "Say 'LLM OK' in two words.") -> Tuple[bool, str]:
+    """
+    GUI-only readiness check. Does NOT touch llm_state.json.
+    """
+    cfg = load_voice_config()
+    llm = cfg.get("llm") or {}
+
+    base_url = str(llm.get("base_url") or "").strip()
+    model = str(llm.get("model") or "").strip()
+    api_key_file = str(llm.get("api_key_file") or "").strip()
+    timeout_sec = int(llm.get("timeout_sec") or 15)
+    max_out = int(llm.get("max_output_tokens") or 60)
+    temperature = float(llm.get("temperature") or 0.2)
+
+    if not base_url:
+        return False, "FAIL: llm.base_url missing"
+    if not model:
+        return False, "FAIL: llm.model missing"
+    if not api_key_file:
+        return False, "FAIL: llm.api_key_file missing"
+
+    key = _read_text_file(Path(api_key_file))
+    if not key:
+        return False, f"FAIL: key file empty: {api_key_file}"
+
+    payload: Dict[str, Any] = {
+        "model": model,
+        "input": [
+            {"role": "system", "content": "Reply very briefly."},
+            {"role": "user", "content": test_prompt},
+        ],
+        "max_output_tokens": max_out,
+        "temperature": temperature,
+    }
+
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+    try:
+        r = requests.post(base_url, headers=headers, json=payload, timeout=timeout_sec)
+    except Exception as e:
+        return False, f"FAIL: request error: {type(e).__name__}: {e}"
+
+    if r.status_code >= 300:
+        body = (r.text or "")[:200].replace("\n", " ")
+        return False, f"FAIL: http={r.status_code} body={body}"
+
+    try:
+        j = r.json()
+    except Exception:
+        return False, "FAIL: non-JSON response"
+
+    txt = _extract_output_text(j).strip()
+    if not txt:
+        return True, "OK: (empty reply)"
+
+    preview = txt.replace("\n", " ")
+    if len(preview) > 80:
+        preview = preview[:80] + "..."
+    return True, f"OK: {preview}"
 
 
 if __name__ == "__main__":

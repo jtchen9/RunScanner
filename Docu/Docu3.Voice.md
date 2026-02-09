@@ -416,7 +416,7 @@ No cloud calls in Wave-2
 
 ---
 
-### NMS.CMD.VOICE.TEST.PROMPT (GUI only)
+### GUI.BUTTON.VOICE.TEST.PROMPT 
 
 **Purpose:**
 On-site test hook for voice output without microphone input.

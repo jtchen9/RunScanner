@@ -195,18 +195,25 @@ def match_phrase(text_norm: str, phrases: List[str]) -> Optional[str]:
         if ph_norm and ph_norm in text_norm:
             return ph
 
-    # 2) Fuzzy path
+    # 2) Fuzzy path (compatible with voice_common.fuzzy_match)
     best_phrase: Optional[str] = None
     best_score: float = 0.0
 
     for ph in phrases:
-        ok, dbg = fuzzy_match(
-            ph,
-            text_norm,
-            min_token_overlap=0.50,
-            min_ratio=0.65,   # a bit stricter for longer phrases
+        ph_norm = normalize_text(ph)
+        if not ph_norm:
+            continue
+
+        ok, score = fuzzy_match(
+            text_norm,            # <-- STT text (normalized)
+            ph_norm,              # <-- target phrase (normalized)
+            token_cutoff=0.78,
+            first_token_cutoff=0.80,
+            last_token_cutoff=0.80,
+            min_hit=1,
+            require_last_token=False,
         )
-        score = float(dbg.get("ratio", 0.0)) if isinstance(dbg, dict) else 0.0
+
         if ok and score > best_score:
             best_score = score
             best_phrase = ph

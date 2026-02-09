@@ -8,7 +8,6 @@ Keeps *all* Wave-2 voice files under /home/pi/_RunScanner/voice
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 import re
@@ -21,16 +20,10 @@ ALLOW_CALLSIGN_ONLY = True
 # Paths
 BASE_DIR = Path("/home/pi/_RunScanner")
 VOICE_DIR = BASE_DIR / "voice"
-VOICE_CFG_FILE = VOICE_DIR / "voice_config.json"
 VOICE_LOG_FILE = VOICE_DIR / "voice_service.log"
 
-# Defaults (Wave-2)
-DEFAULT_CFG: Dict[str, Any] = {
-    "mode": "deaf",
-    "conversation_timeout_sec": 20,
-    "llm_timeout_sec": 30,
-    "script": [],
-}
+# Config IO lives in voice_config.py (single source of truth)
+from voice_config import load_voice_config, save_voice_config, update_voice_config
 
 def local_ts() -> str:
     import time
@@ -57,67 +50,6 @@ def voice_log(msg: str, *, also_print: bool = True) -> None:
             f.write(line + "\n")
     except Exception:
         pass
-
-def ensure_voice_config() -> None:
-    """
-    Ensure voice_config.json exists with DEFAULT_CFG.
-    """
-    try:
-        VOICE_DIR.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
-
-    if VOICE_CFG_FILE.exists():
-        return
-
-    save_voice_config(DEFAULT_CFG)
-
-def load_voice_config() -> Dict[str, Any]:
-    """
-    Load config from voice_config.json.
-    If missing or corrupted, create defaults.
-    """
-    ensure_voice_config()
-    try:
-        obj = json.loads(VOICE_CFG_FILE.read_text(encoding="utf-8"))
-        if isinstance(obj, dict):
-            # overlay defaults to ensure keys exist
-            out = dict(DEFAULT_CFG)
-            out.update(obj)
-            # ensure types
-            out["script"] = out.get("script") if isinstance(out.get("script"), list) else []
-            return out
-    except Exception:
-        pass
-
-    # fallback: recreate defaults
-    save_voice_config(DEFAULT_CFG)
-    return dict(DEFAULT_CFG)
-
-def save_voice_config(cfg: Dict[str, Any]) -> None:
-    """
-    Atomic write config to voice_config.json.
-    """
-    ensure_voice_config()
-    out = dict(DEFAULT_CFG)
-    out.update(cfg or {})
-
-    # normalize
-    if not isinstance(out.get("script"), list):
-        out["script"] = []
-
-    tmp = VOICE_CFG_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(VOICE_CFG_FILE)
-
-def update_voice_config(patch: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Read-modify-write update (returns new cfg).
-    """
-    cur = load_voice_config()
-    cur.update(patch or {})
-    save_voice_config(cur)
-    return cur
 
 def validate_script(commands: Any) -> List[Dict[str, Any]]:
     """

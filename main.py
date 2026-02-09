@@ -10,6 +10,7 @@ from config import local_ts
 from config import get_bundle_version
 import shutil
 from config import BASE_DIR, SYSTEMCTL, SUDO, SERVICE_SCANNER_POLLER
+from voice.voice_llm import llm_runtime_ready
 
 REGISTER_PY = BASE_DIR / "register.py"
 SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"
@@ -188,35 +189,75 @@ def read_register_status() -> str:
     except Exception:
         return "register=unknown"
     
+# def _run_systemctl(args):
+#     """
+#     Run systemctl. Try without sudo first; if that fails, retry with sudo -n.
+#     Returns (ok: bool, stdout: str, stderr: str)
+#     """
+#     # 1) try without sudo
+#     try:
+#         cp = subprocess.run(
+#             [SYSTEMCTL] + args,
+#             check=True,
+#             capture_output=True,
+#             text=True,
+#             stdin=subprocess.DEVNULL,
+#         )
+#         return True, cp.stdout.strip(), cp.stderr.strip()
+#     except subprocess.CalledProcessError as e1:
+#         # 2) retry with sudo -n
+#         try:
+#             cp2 = subprocess.run(
+#                 [SUDO, "-n", SYSTEMCTL] + args,
+#                 check=True,
+#                 capture_output=True,
+#                 text=True,
+#                 stdin=subprocess.DEVNULL,
+#             )
+#             return True, cp2.stdout.strip(), cp2.stderr.strip()
+#         except subprocess.CalledProcessError as e2:
+#             return False, (e2.stdout or "").strip(), (e2.stderr or e1.stderr or "").strip()
+
 def _run_systemctl(args):
     """
-    Run systemctl. Try without sudo first; if that fails, retry with sudo -n.
+    Run systemctl without GUI password prompts.
+    Prefer sudo -n first (for start/stop), then fall back to non-sudo (for read-only cases).
     Returns (ok: bool, stdout: str, stderr: str)
     """
-    # 1) try without sudo
+    # 1) try with sudo -n first (prevents polkit GUI prompt)
     try:
         cp = subprocess.run(
-            [SYSTEMCTL] + args,
-            check=True,
+            [SUDO, "-n", SYSTEMCTL] + args,
+            check=False,
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
         )
-        return True, cp.stdout.strip(), cp.stderr.strip()
-    except subprocess.CalledProcessError as e1:
-        # 2) retry with sudo -n
-        try:
-            cp2 = subprocess.run(
-                [SUDO, "-n", SYSTEMCTL] + args,
-                check=True,
-                capture_output=True,
-                text=True,
-                stdin=subprocess.DEVNULL,
-            )
-            return True, cp2.stdout.strip(), cp2.stderr.strip()
-        except subprocess.CalledProcessError as e2:
-            return False, (e2.stdout or "").strip(), (e2.stderr or e1.stderr or "").strip()
-        
+        out = (cp.stdout or "").strip()
+        err = (cp.stderr or "").strip()
+        if cp.returncode == 0:
+            return True, out, err
+    except Exception as e:
+        # keep going to non-sudo fallback
+        out = ""
+        err = str(e)
+
+    # 2) fallback: try without sudo (works for is-active/status sometimes)
+    try:
+        cp2 = subprocess.run(
+            [SYSTEMCTL] + args,
+            check=False,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+        )
+        out2 = (cp2.stdout or "").strip()
+        err2 = (cp2.stderr or "").strip()
+        ok2 = (cp2.returncode == 0)
+        return ok2, out2, err2
+    except Exception as e2:
+        return False, "", str(e2)
+
 def service_is_active():
     ok, out, _ = _run_systemctl(["is-active", SERVICE_SCANNER_POLLER])
     # systemctl is-active returns nonzero when inactive; treat output text for truth
@@ -236,9 +277,9 @@ def set_button_and_status(active: bool):
     scan_line = f"Scanning Channel since {now_str}" if active else f"Stop Scanning at {now_str}"
 
     if active:
-        button01.config(text="Stop Scan")
+        button13.config(text="Stop Scan")
     else:
-        button01.config(text="Scan Channel")
+        button13.config(text="Scan Channel")
 
     show_status(reg_line + "\n" + scan_line)
 
@@ -271,12 +312,78 @@ def _voice_set_mode(mode: str) -> bool:
     cfg["mode"] = mode
     return _voice_save_cfg(cfg)
 
+def _update_voice_button_label():
+    cur = _voice_get_mode()
+    if cur == "name_listen":
+        button10.config(text="Voice: Listen")
+    else:
+        button10.config(text="Voice: Deaf")
+
 # ---- Grid functions ----
 def function00():
-    messagebox.showinfo("Information", "This is a Major Alert!")
-    show_status("This is a Major Alert!")
+    """
+    Show current status: identity + bundle + last register + scan service state.
+    """
+    active = False
+    try:
+        active = service_is_active()
+    except Exception:
+        active = False
+
+    now_str = local_ts()
+    name = read_scanner_name()
+    reg  = read_register_status()
+    scan_line = "scanner-poller: active" if active else "scanner-poller: inactive"
+
+    msg = (
+        "CURRENT STATUS\n"
+        f"Time: {now_str}\n"
+        f"Scanner: {name or '(unassigned)'}\n"
+        f"Bundle: {get_bundle_version()}\n"
+        f"{reg}\n"
+        f"{scan_line}\n"
+    )
+    show_status(msg, log=True)
 
 def function01():
+    # Re-run AV readiness probe and show it
+    rep = av_runtime_ready_probe()
+    show_status(rep, log=True)
+
+def function02():
+    def worker():
+        ok, detail = llm_runtime_ready("Say 'LLM OK' in two words.")
+        root.after(0, lambda: show_status(f"LOCAL.LLM.RUNTIME.READY\n{detail}", log=True))
+    threading.Thread(target=worker, daemon=True).start()
+
+def function03():
+    # Show last 10 log messages
+    if log_records:
+        last10 = log_records[-10:]
+        combined = "\n".join(last10)
+        show_status(combined, log=False)  # do not log "Show Log"
+    else:
+        show_status("Log is empty", log=False)
+
+def function10():
+    def worker():
+        cur = _voice_get_mode()
+        target = "name_listen" if cur == "deaf" else "deaf"
+        ok = _voice_set_mode(target)
+        if ok:
+            def ui():
+                show_status(f"VOICE: mode {cur} -> {target}", log=True)
+                _update_voice_button_label()
+            root.after(0, ui)
+        else:
+            root.after(0, lambda: show_status("VOICE: failed to write voice_config.json", log=True))
+    threading.Thread(target=worker, daemon=True).start()
+
+def function20():
+    ok, detail = play_test_beep()
+    show_status("Test beep: OK" if ok else f"Test beep: FAIL\n{detail}", log=True)
+
+def function13():
     """Toggle scanner-poller service start/stop without freezing the GUI."""
     def worker():
         global scanningChannel
@@ -296,46 +403,6 @@ def function01():
             else:
                 root.after(0, lambda: show_status(
                     f"Failed to stop scanner-poller\n{err or out}", log=True))
-    threading.Thread(target=worker, daemon=True).start()
-
-def function02():
-    # Show last 10 log messages
-    if log_records:
-        last10 = log_records[-10:]
-        combined = "\n".join(last10)
-        show_status(combined, log=False)  # do not log "Show Log"
-    else:
-        show_status("Log is empty", log=False)
-
-def function03():
-    show_status("Quitting application...")
-    root.after(500, root.destroy)
-
-def function10():
-    # Re-run AV readiness probe and show it
-    rep = av_runtime_ready_probe()
-    show_status(rep, log=True)
-
-def function13():
-    ok, detail = play_test_beep()
-    show_status("Test beep: OK" if ok else f"Test beep: FAIL\n{detail}", log=True)
-
-def function20():
-    """
-    GUI voice toggle:
-      - if deaf -> name_listen
-      - else    -> deaf
-    (We do NOT start/stop systemd service here.)
-    """
-    def worker():
-        cur = _voice_get_mode()
-        target = "name_listen" if cur == "deaf" else "deaf"
-        ok = _voice_set_mode(target)
-        if ok:
-            root.after(0, lambda: show_status(f"VOICE: mode {cur} -> {target}", log=True))
-        else:
-            root.after(0, lambda: show_status("VOICE: failed to write voice_config.json", log=True))
-
     threading.Thread(target=worker, daemon=True).start()
 
 def function23():
@@ -396,37 +463,39 @@ style.configure(
   font=("Segoe UI", 14))
 
 # ---- Buttons ----
-button00 = ttk.Button(root, text="Show Alert!", command=function00)
+# --- Top row ---
+button00 = ttk.Button(root, text="Current Status", command=function00)
 button00.grid(row=0, column=0, sticky="EWNS")
 
-scanningChannel = False
-button01 = ttk.Button(root, text="Scan Channel", command=function01)
+button01 = ttk.Button(root, text="AV Readiness", command=function01)
 button01.grid(row=0, column=1, sticky="EWNS")
+
+button02 = ttk.Button(root, text="LLM Status", command=function02)
+button02.grid(row=0, column=2, sticky="EWNS")
+
+button03 = ttk.Button(root, text="Show Log", command=function03)
+button03.grid(row=0, column=3, sticky="EWNS")
+
+# --- Left column (voice + beep) ---
+button10 = ttk.Button(root, text="Voice: Deaf/Listen", command=function10)
+button10.grid(row=1, column=0, sticky="EWNS")
+
+button20 = ttk.Button(root, text="Beep Test", command=function20)
+button20.grid(row=2, column=0, sticky="EWNS")
+
+# --- Right column (scan + reserved) ---
+button13 = ttk.Button(root, text="Scan Channel", command=function13)
+button13.grid(row=1, column=3, sticky="EWNS")
+
+button23 = ttk.Button(root, text="B23", command=function23)
+button23.grid(row=2, column=3, sticky="EWNS")
 
 # Detect actual service state at startup so UI matches reality
 try:
     scanningChannel = service_is_active()
 except Exception:
     scanningChannel = False  # fall back if systemctl not accessible
-
 set_button_and_status(scanningChannel)
-
-button02 = ttk.Button(root, text="Show Log", command=function02)
-button02.grid(row=0, column=2, sticky="EWNS")
-
-button03 = ttk.Button(root, text="Quit", command=function03)
-button03.grid(row=0, column=3, sticky="EWNS")
-
-button10 = ttk.Button(root, text="AV Readiness", command=function10)
-button10.grid(row=1, column=0, sticky="EWNS")
-
-button13 = ttk.Button(root, text="Beep Test", command=function13)
-button13.grid(row=1, column=3, sticky="EWNS")
-
-button20 = ttk.Button(root, text="Voice: Deaf/Listen", command=function20)
-button20.grid(row=2, column=0, sticky="EWNS")
-
-button23 = ttk.Button(root, text="B23", command=function23)
-button23.grid(row=2, column=3, sticky="EWNS")
+_update_voice_button_label()
 
 root.mainloop()

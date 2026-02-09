@@ -19,21 +19,24 @@ Wave-3 builds on Wave-2 voice state machine and does not modify STT, mic tuning,
 
 ===
 
-### LOCAL.LLM.RUNTIME.READY
+### LOCAL.LLM.RUNTIME.READY 
 
-**Purpose:****
+**Purpose:**
 Verify the Pi can reach the LLM endpoint and has valid config.
 
 **Behavior:**
-    Checks voice_config.json has llm key and required fields (api_base, api_key, model).
-    Performs a small test request (e.g., “ping”) and verifies a text reply is returned via POST /v1/responses.
+- Checks `voice_config.json` has `llm` object and required fields:
+  - `base_url` (e.g. `https://api.openai.com/v1/responses`)
+  - `api_key_file` (path to key file)
+  - `model`
+- Performs a small test request (e.g., “ping”) and verifies a text reply is returned.
 
 **Entry conditions:**
-    Manual operator run (CLI / GUI utility button later)
-    Integration test script (recommended)
+- GUI button: **LLM status** (top row)
+- Optional operator CLI utility (if you keep one)
 
 **Exit conditions:**
-    Returns a short report string (OK / FAIL + reason)
+Returns a short report string: `OK` / `FAIL: <reason>` (+ optional reply preview)
 
 ---
 
@@ -61,56 +64,53 @@ Interactive chat loop: STT → LLM → TTS, until timeout or stop phrase.
 
 ---
 
-### NMS.CMD.VOICE.LLM.CONFIG.SET
+### NMS.CMD.VOICE.LLM.CONFIG.SET 
 
 **Purpose:**
-Update the llm config block (single key) inside voice_config.json.
+Update only the `llm` config block inside `voice_config.json`.
 
 **Behavior:**
-Merge/replace voice_config.json["llm"] with provided object.
-Does not start/stop services by itself.
+- Parses provided JSON (must be valid).
+- Merges/replaces `voice_config.json["llm"]` with the provided object.
+- Does not start/stop services.
 
 **Entry conditions:**
 NMS command enqueue
 
 **Exit conditions:**
-Returns ok or error (validation failure)
+Returns ok, or error if JSON is invalid / `llm` is not an object.
 
 **args_json template:**
 ```json
 {
   "llm": {
     "provider": "openai",
-    "api_base": "https://api.openai.com/v1",
-    "api_key": "sk-REDACTED",
-    "model": "gpt-5",
+    "base_url": "https://api.openai.com/v1/responses",
+    "model": "gpt-4.1-mini",
+    "api_key_file": "/home/pi/.keys/openai.key",
     "timeout_sec": 30,
-    "max_output_tokens": 200,
-    "temperature": 0.2,
-    "system_prompt": "Keep replies short."
+    "max_output_tokens": 250,
+    "temperature": 0.4,
+    "session_id": "twin-scout-alpha"
   }
 }
 ```
 
 ---
 
-### NMS.CMD.VOICE.LLM.TEST
+### GUI.BUTTON.LLM.STATUS
 
 **Purpose:**
 Validate end-to-end LLM connectivity from the Pi (no mic required).
 
 **Behavior:**
-Sends a provided test prompt to the LLM and returns the text reply (truncated).
+- Sends a short test prompt to the LLM.
+- Displays OK / FAIL + short reason.
+- Optionally displays a short reply preview (truncated).
+- Does not change voice mode.
 
 **Entry conditions:**
-Operator / integration test
+Operator presses **LLM status** button on GUI.
 
 **Exit conditions:**
-Returns ok + reply_preview, or error
-
-**args_json template:**
-```json
-{
-  "prompt": "Say 'LLM OK' in two words."
-}
-```
+Shows status result on screen.

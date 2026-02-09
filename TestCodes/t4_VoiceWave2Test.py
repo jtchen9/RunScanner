@@ -228,10 +228,10 @@ def main() -> int:
         )
         pause()
 
-        print_step("STEP 4: Enqueue voice.mode.set (agent should set mode=conversation without restart)")
+        print_step("STEP 4: Enqueue voice.mode.set (agent should set mode=name_listen without restart)")
         cid_mode = enqueue(
             nms_base, identity, "voice.mode.set",
-            {"mode": "conversation"}
+            {"mode": "name_listen"}
         )
         pause()
 

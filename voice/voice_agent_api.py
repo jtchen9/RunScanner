@@ -7,12 +7,14 @@ Keep all voice code under /home/pi/_RunScanner/voice.
 """
 
 from __future__ import annotations
-
+from pathlib import Path
 import subprocess
 from typing import Any, Dict, Tuple, List
-
-from voice_common import update_voice_config, validate_script
-
+from voice_common import update_voice_config, validate_script, load_voice_config, save_voice_config
+import json
+from typing import Any, Dict, Tuple
+from voice_llm import llm_exchange            # uses your existing LLM channel
+import requests
 
 SERVICE_VOICE = "scanner-voice.service"
 SYSTEMCTL = "/bin/systemctl"
@@ -48,7 +50,6 @@ def _run_systemctl(args: List[str]) -> Tuple[bool, str]:
             return True, (cp2.stdout or "").strip() or "ok"
         except Exception as e2:
             return False, f"systemctl failed: {type(e2).__name__}: {e2} (first={type(e1).__name__}: {e1})"
-
 
 def exec_voice_start(args: Dict[str, Any]) -> Tuple[bool, str]:
     """
@@ -94,7 +95,6 @@ def exec_voice_start(args: Dict[str, Any]) -> Tuple[bool, str]:
     ok, detail = _run_systemctl(["start", SERVICE_VOICE])
     return (ok, f"voice.start: mode={mode} {detail}")
 
-
 def exec_voice_stop() -> Tuple[bool, str]:
     """
     NMS.CMD.VOICE.STOP (Wave-2)
@@ -102,7 +102,6 @@ def exec_voice_stop() -> Tuple[bool, str]:
     """
     ok, detail = _run_systemctl(["stop", SERVICE_VOICE])
     return (ok, f"voice.stop: {detail}")
-
 
 def exec_voice_mode_set(args: Dict[str, Any]) -> Tuple[bool, str]:
     """
@@ -116,7 +115,6 @@ def exec_voice_mode_set(args: Dict[str, Any]) -> Tuple[bool, str]:
     update_voice_config({"mode": mode})
     return True, f"voice.mode.set: mode={mode}"
 
-
 def exec_voice_script_set(args: Dict[str, Any]) -> Tuple[bool, str]:
     """
     NMS.CMD.VOICE.SCRIPT.SET (agent-only)
@@ -127,3 +125,31 @@ def exec_voice_script_set(args: Dict[str, Any]) -> Tuple[bool, str]:
     script = validate_script(commands)
     update_voice_config({"script": script})
     return True, f"voice.script.set: script_len={len(script)}"
+
+def exec_voice_llm_config_set(args: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    NMS.CMD.VOICE.LLM.CONFIG.SET (Wave-3)
+    Only updates voice_config.json["llm"] (merge), does NOT replace whole file.
+
+    args_json should parse to:
+      {"llm": {...}}
+    """
+    llm_patch = args.get("llm")
+    if not isinstance(llm_patch, dict):
+        return False, "voice.llm.config.set: args.llm missing or not an object"
+
+    cfg = load_voice_config()
+    cur_llm = cfg.get("llm")
+    if not isinstance(cur_llm, dict):
+        cur_llm = {}
+
+    # merge
+    cur_llm.update(llm_patch)
+    cfg["llm"] = cur_llm
+
+    # atomic save (your existing save_voice_config is atomic)
+    save_voice_config(cfg)
+
+    keys = sorted(list(llm_patch.keys()))
+    return True, f"voice.llm.config.set: updated llm keys={keys}"
+

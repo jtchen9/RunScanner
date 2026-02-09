@@ -1,9 +1,9 @@
-# /home/pi/.config/autostart/myscript.desktop
 [Desktop Entry]
 Type=Application
 Name=My Tkinter App
 Comment=Start my Tkinter GUI at login
 Exec=/usr/bin/python3 /home/pi/_RunScanner/main.py
+# Exec=/usr/bin/bash -lc '/usr/bin/python3 -u /home/pi/_RunScanner/main.py >> /tmp/tk_gui.log 2>&1'
 Path=/home/pi/_RunScanner
 Terminal=false
 Hidden=false
