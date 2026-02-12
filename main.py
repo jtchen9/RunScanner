@@ -303,7 +303,7 @@ def _voice_save_cfg(cfg: dict) -> bool:
 
 def _voice_get_mode() -> str:
     m = str(_voice_load_cfg().get("mode") or "deaf").strip()
-    return m if m in ("deaf", "name_listen", "conversation", "llm_dummy") else "deaf"
+    return m if m in ("deaf", "name_listen", "conversation", "llm_dummy", "llm_browser",) else "deaf"
 
 def _voice_set_mode(mode: str) -> bool:
     if mode not in ("deaf", "name_listen"):
@@ -314,8 +314,11 @@ def _voice_set_mode(mode: str) -> bool:
 
 def _update_voice_button_label():
     cur = _voice_get_mode()
-    if cur == "name_listen":
-        button10.config(text="Voice: Listen")
+    if cur in ("name_listen", "conversation", "llm_dummy"):
+            button10.config(text="Voice: Listen")
+    elif cur == "llm_browser":
+        # In llm_browser, the ONLY safe exit is forcing mode=deaf (per voice_service.py rule).
+        button10.config(text=f"Voice: Browser \n  (tap to exit)")
     else:
         button10.config(text="Voice: Deaf")
 
@@ -368,6 +371,7 @@ def function03():
 def function10():
     def worker():
         cur = _voice_get_mode()
+        # For llm_browser, pressing this button MUST exit to deaf.
         target = "name_listen" if cur == "deaf" else "deaf"
         ok = _voice_set_mode(target)
         if ok:
@@ -409,6 +413,7 @@ def function23():
     show_status("Hello B23!")
 
 log_records = []   # will store all messages
+_last_gui_mode = None
 
 # ---- LOCAL.AV.RUNTIME.READY (run BEFORE registration) ----
 try:
@@ -496,6 +501,25 @@ try:
 except Exception:
     scanningChannel = False  # fall back if systemctl not accessible
 set_button_and_status(scanningChannel)
+
+_last_gui_mode = None
+
+def _poll_voice_mode():
+    global _last_gui_mode
+    try:
+        cur = _voice_get_mode()
+        if cur != _last_gui_mode:
+            _last_gui_mode = cur
+            _update_voice_button_label()
+            show_status(f"VOICE: mode -> {cur}", log=True)
+        else:
+            # still keep label fresh (optional)
+            _update_voice_button_label()
+    except Exception:
+        pass
+    root.after(500, _poll_voice_mode)
+    
 _update_voice_button_label()
+_poll_voice_mode()
 
 root.mainloop()

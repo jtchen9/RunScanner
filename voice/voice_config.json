@@ -2,6 +2,7 @@
     "mode": "name_listen",
     "conversation_timeout_sec": 20,
     "llm_timeout_sec": 30,
+    "name_listen_timeout_sec": 300,
     "script": [
     {
         "phrase": "lets talk",
@@ -31,6 +32,7 @@
     "name_listen_enter_say": "I am listening.",
     "conversation_enter_say": "How can I help you?",
     "llm_enter_say": "Do you want to chat with me?",
+    "llm_browser_enter_say": "Do you want to chat with me?",
     "llm": {
     "provider": "openai",
     "base_url": "https://api.openai.com/v1/responses",
@@ -46,5 +48,11 @@
     "utterance_min_chars": 2,
     "llm_min_chars": 8,
     "utterance_joiner": " ",
-    "utterance_speech_min_chars": 1    
+    "utterance_speech_min_chars": 1,
+    "llm_browser": {
+        "start_script": "/home/pi/_RunScanner/voice/llm_browser_start.sh",
+        "stop_script": "/home/pi/_RunScanner/voice/llm_browser_stop.sh",
+        "profile_dir": "/home/pi/_RunScanner/_state/voice_llm_browser_profile",
+        "url": "https://chatgpt.com/c/69885692-4730-83a6-b8f8-64cbe3e9870e"
+    }    
 }

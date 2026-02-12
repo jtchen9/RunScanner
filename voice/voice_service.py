@@ -4,11 +4,12 @@ Wave-2 Voice Service (state machine)
 
 - Long-running process controlled by systemd (scanner-voice.service)
 - Maintains a current mode stored in voice_config.json:
-    deaf | name_listen | conversation | llm_dummy
+    deaf | name_listen | conversation | llm_dummy | llm_browser
 - External control (agent/GUI) is restricted to: deaf <-> name_listen
 - Internal transitions:
     name_listen -> conversation  (wake-name match)
     conversation -> llm_dummy    (script action enter.llm)
+    conversation -> llm_browser   (script action enter.llm; preferred path)
     conversation -> name_listen  (timeout)
     llm_dummy -> name_listen     (timeout)
 - Optional safety:
@@ -21,9 +22,10 @@ Wave-2:
 """
 
 from __future__ import annotations
-
+import os
 import time
 import subprocess
+from pathlib import Path
 from typing import Dict, Any, Tuple
 from voice_common import (
     read_identity,
@@ -44,7 +46,7 @@ TTS_SCRIPT = "/home/pi/_RunScanner/av/tts_say.sh"
 def _cue_listen(cfg: Dict[str, Any]) -> None:
     # short audio cue before recording (uses working TTS path)
     t0 = time.time()
-    ok, detail = _speak_cfg(cfg, "go", lead_ms=250)
+    ok, detail = _speak_cfg(cfg, "go", lead_ms=200)
     voice_log(f"CUE: done ok={ok} dt={time.time()-t0:.2f}s detail={detail}")
 
 def _cfg_int(cfg: Dict[str, Any], key: str, default: int) -> int:
@@ -76,6 +78,8 @@ def _mode_enter_prompt(cfg: Dict[str, Any], mode: str) -> str:
         return _cfg_str(cfg, "conversation_enter_say", "How can I help you?")
     if mode == "llm_dummy":
         return _cfg_str(cfg, "llm_enter_say", "Do you want to chat with me?")
+    if mode == "llm_browser":
+        return _cfg_str(cfg, "llm_browser_enter_say", "Entering browser chat.")
     return ""
 
 def _enter_mode(cfg: Dict[str, Any], new_mode: str, *, reason: str = "") -> Tuple[str, float]:
@@ -272,6 +276,140 @@ def _should_exit_llm(norm: str) -> bool:
         "stop chatting", "exit", "quit", "goodbye", "stop", "cancel"
     ))
 
+def _browser_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    # cfg["llm_browser"] is optional; we provide safe defaults
+    return dict(cfg.get("llm_browser") or {})
+
+def _browser_start_script(cfg: Dict[str, Any]) -> str:
+    b = _browser_cfg(cfg)
+    # Preferred: use scripts (Option B) so xdotool/window management stays in one place.
+    # You can override in voice_config.json:
+    #   "llm_browser": { "start_script": "/path/to/llm_browser_start.sh", ... }
+    p = str(b.get("start_script") or "").strip()
+    if p:
+        return p
+    # default: sibling script next to this file
+    return str(Path(__file__).resolve().parent / "llm_browser_start.sh")
+
+def _browser_stop_script(cfg: Dict[str, Any]) -> str:
+    b = _browser_cfg(cfg)
+    p = str(b.get("stop_script") or "").strip()
+    if p:
+        return p
+    return str(Path(__file__).resolve().parent / "llm_browser_stop.sh")
+
+def _start_llm_browser(cfg: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Option B: start via shell script (xdotool / window positioning / X11).
+    """
+    script = _browser_start_script(cfg)
+    try:
+        cp = subprocess.run(
+            ["/usr/bin/bash", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=45,
+        )
+        out = (cp.stdout or "").strip()
+        err = (cp.stderr or "").strip()
+        if cp.returncode == 0:
+            return True, f"started via script={script} out='{out[:160]}'"
+        return False, f"start rc={cp.returncode} script={script} err='{(err or out)[:200]}'"
+    except FileNotFoundError:
+        return False, f"start failed: bash/script not found (script={script})"
+    except Exception as e:
+        return False, f"start failed {type(e).__name__}: {e} (script={script})"
+
+def _stop_llm_browser(cfg: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Option B: stop via shell script (best-effort graceful window close).
+    """
+    script = _browser_stop_script(cfg)
+    try:
+        cp = subprocess.run(
+            ["/usr/bin/bash", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=15,
+        )
+        out = (cp.stdout or "").strip()
+        err = (cp.stderr or "").strip()
+        if cp.returncode == 0:
+            return True, f"stopped via script={script} out='{out[:160]}'"
+        return False, f"stop rc={cp.returncode} script={script} err='{(err or out)[:200]}'"
+    except FileNotFoundError:
+        return False, f"stop failed: bash/script not found (script={script})"
+    except Exception as e:
+        return False, f"stop failed {type(e).__name__}: {e} (script={script})"
+
+def _pick_xauth(uid: int, xdg_runtime_dir: str) -> str:
+    # mimic llm_browser_start.sh behavior
+    try:
+        cp = subprocess.run(
+            ["/usr/bin/bash", "-lc", f"ls -t {xdg_runtime_dir}/.mutter-Xwaylandauth.* 2>/dev/null | head -n 1"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+            stdin=subprocess.DEVNULL,
+        )
+        xa = (cp.stdout or "").strip()
+        if xa:
+            return xa
+    except Exception:
+        pass
+    return str(Path.home() / ".Xauthority")
+
+def _x11_env_for_service() -> Dict[str, str]:
+    # Avoid hardcoding /run/user/1000
+    uid = int(subprocess.check_output(["/usr/bin/id", "-u"], text=True).strip())
+    xdg = f"/run/user/{uid}"
+    xa = _pick_xauth(uid, xdg)
+    env = {
+        "DISPLAY": ":0",
+        "XDG_RUNTIME_DIR": xdg,
+        "XAUTHORITY": xa,
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    }
+    # If DBUS is already set in this service, keep it (doesn't hurt)
+    if "DBUS_SESSION_BUS_ADDRESS" in os.environ:
+        env["DBUS_SESSION_BUS_ADDRESS"] = os.environ["DBUS_SESSION_BUS_ADDRESS"]
+    return env
+
+def _x11_window_exists(wid: str) -> Tuple[bool, str]:
+    wid = (wid or "").strip()
+    if not wid:
+        return False, "empty wid"
+
+    env = _x11_env_for_service()
+    try:
+        # getwindowgeometry works on older xdotool; "windowexists" may not.
+        cp = subprocess.run(
+            ["/usr/bin/xdotool", "getwindowgeometry", wid],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=2,
+            stdin=subprocess.DEVNULL,
+            env=env,
+        )
+        if cp.returncode == 0:
+            return True, "exists"
+
+        err = (cp.stderr or "").strip().lower()
+
+        # If X is not authorized / display not available, DO NOT treat as gone.
+        if ("unable to open display" in err) or ("xauthority" in err) or ("display" in err):
+            return True, f"x11 not authorized yet (ignore): {err[:120]}"
+
+        return False, f"missing rc={cp.returncode} err='{err[:120]}'"
+    except Exception as e:
+        return True, f"check exception (ignore): {type(e).__name__}: {e}"
 
 def main() -> None:
     ident = read_identity() or "UNKNOWN"
@@ -302,19 +440,34 @@ def main() -> None:
     last_hb = 0.0
     conv_last_activity_ts = mode_enter_ts
     llm_last_activity_ts = mode_enter_ts
+    llm_browser_started = False
+    name_listen_enter_ts = mode_enter_ts
 
     while True:
         try:
             cfg = load_voice_config()
 
-            # --- External requested mode (restricted to deaf <-> name_listen) ---
+            # --- External requested mode (restricted) ---
             requested = _sanitize_mode(cfg.get("mode", "deaf"))
 
-            if requested in ("deaf", "name_listen") and requested != mode:
-                mode, mode_enter_ts = _enter_mode(cfg, requested, reason="external_request")
-            elif requested not in ("deaf", "name_listen") and requested != mode:
-                # external tries to force conversation/llm -> ignore
-                voice_log(f"VOICE: ignore external mode request '{requested}' (restricted)")
+            if mode == "llm_browser":
+                # While in llm_browser, ONLY honor exit-to-DEAF.
+                # IMPORTANT: do NOT "continue" here; llm_browser mode behavior must run
+                # (so we can start Chromium on entry).
+                if requested == "deaf":
+                    okk, detailk = _stop_llm_browser(cfg)
+                    voice_log(f"LLM_BROWSER: stop ok={okk} detail={detailk}")
+                    llm_browser_started = False
+                    mode, mode_enter_ts = _enter_mode(cfg, "deaf", reason="exit_llm_browser_to_deaf")
+                elif requested in ("name_listen", "conversation", "llm_dummy") and requested != mode:
+                    voice_log(f"LLM_BROWSER: ignore external request '{requested}' (exit is DEAF only)")
+                # fall through to mode behavior
+            else:
+                # Normal external control: deaf <-> name_listen only
+                if requested in ("deaf", "name_listen") and requested != mode:
+                    mode, mode_enter_ts = _enter_mode(cfg, requested, reason="external_request")
+                elif requested not in ("deaf", "name_listen") and requested != mode:
+                    voice_log(f"VOICE: ignore external mode request '{requested}' (restricted)")
 
             # --- Log mode transitions (once) ---
             if mode != last_mode:
@@ -324,6 +477,8 @@ def main() -> None:
                     conv_last_activity_ts = time.time()
                 elif mode == "llm_dummy":
                     llm_last_activity_ts = time.time()
+                elif mode == "name_listen":
+                    name_listen_enter_ts = time.time()
 
             # --- Heartbeat ---
             now = time.time()
@@ -354,6 +509,12 @@ def main() -> None:
 
             # NAME_LISTEN: listen for wake name -> enter conversation
             if mode == "name_listen":
+                name_listen_to = int(cfg.get("name_listen_timeout_sec") or 0)
+                if name_listen_to > 0 and (time.time() - name_listen_enter_ts) >= name_listen_to:
+                    voice_log("VOICE: name_listen timeout -> deaf")
+                    mode, mode_enter_ts = _enter_mode(cfg, "deaf", reason="name_listen_timeout")
+                    continue
+
                 ok, raw, norm = stt_loop_once(cfg, stt)
                 if ok:
                     norm = normalize_text(norm)
@@ -444,9 +605,11 @@ def main() -> None:
                             summary = _run_status_summary()
                             _speak_cfg(cfg, summary, lead_ms=300)
 
-                        # 3) Only way to enter llm_dummy
+                        # 3) Only way to enter llm_browser
                         if action == "enter.llm":
-                            mode, mode_enter_ts = _enter_mode(cfg, "llm_dummy", reason="enter_llm_action")
+                            # Only switch mode here. The llm_browser mode handler will start Chromium once.
+                            mode, mode_enter_ts = _enter_mode(cfg, "llm_browser", reason="enter_llm_action")
+                            llm_browser_started = False                        
                         break
                 else:
                     voice_log(f"RT_STT: chunk error: {raw}")
@@ -525,6 +688,52 @@ def main() -> None:
                 time.sleep(IDLE_SLEEP_SEC)
                 continue
 
+            # LLM_BROWSER: Chromium owns mic/speaker; Python must not touch STT here.
+            if mode == "llm_browser":
+                wid_file = Path("/home/pi/_RunScanner/voice/llm_browser_wid.txt")
+
+                # Start browser once per entry
+                if not llm_browser_started:
+                    okb, detailb = _start_llm_browser(cfg)
+                    voice_log(f"LLM_BROWSER: start ok={okb} detail={detailb}")
+                    llm_browser_started = True
+
+                    if not okb:
+                        _speak_cfg(cfg, "Browser failed to open.", lead_ms=250)
+                        llm_browser_started = False
+                        mode, mode_enter_ts = _enter_mode(cfg, "name_listen", reason="llm_browser_start_failed")
+                        continue
+
+                    # Give Chromium a moment to map the window + write WID file
+                    time.sleep(0.6)
+
+                # After started: if wid file exists, check it
+                if wid_file.exists():
+                    try:
+                        wid = wid_file.read_text(encoding="utf-8").strip()
+                    except Exception:
+                        wid = ""
+
+                    if wid:
+                        exists, why = _x11_window_exists(wid)
+                        if not exists:
+                            voice_log(f"LLM_BROWSER: window gone wid={wid} -> name_listen ({why})")
+                            try:
+                                wid_file.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                            llm_browser_started = False
+                            mode, mode_enter_ts = _enter_mode(cfg, "name_listen", reason="llm_browser_window_gone")
+                            continue
+                        else:
+                            # Optional: keep log low; uncomment only while debugging
+                            # voice_log(f"LLM_BROWSER: window ok wid={wid} ({why})")
+                            pass
+
+                # Stay here until GUI forces mode=deaf (special rule handles stopping)
+                time.sleep(0.25)
+                continue
+
             # Unknown -> safety
             voice_log(f"VOICE: unknown mode '{mode}' -> name_listen")
             mode, mode_enter_ts = _enter_mode(cfg, "name_listen", reason="unknown_mode")
@@ -532,13 +741,13 @@ def main() -> None:
         except Exception as e:
             # Optional safety: ANY -> name_listen on error
             voice_log(f"VOICE: ERROR {type(e).__name__}: {e} -> name_listen")
+            llm_browser_started = False
             try:
                 cfg = load_voice_config()
                 mode, mode_enter_ts = _enter_mode(cfg, "name_listen", reason="exception_fallback")
             except Exception:
                 pass
             time.sleep(0.5)
-
 
 if __name__ == "__main__":
     try:
