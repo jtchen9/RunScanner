@@ -38,6 +38,28 @@ def update_voice_llm_session(scanner: str) -> None:
         tmp.replace(p)
     except Exception:
         pass
+    
+def update_voice_llm_weblink(llm_weblink: str) -> None:
+    """
+    Update voice_config.json so llm_browser_start.sh uses this link.
+    """
+    if not llm_weblink:
+        return
+    try:
+        p = VOICE_CFG
+        cfg = {}
+        if p.exists():
+            cfg = json.loads(p.read_text(encoding="utf-8") or "{}")
+
+        llm_browser = cfg.get("llm_browser") or {}
+        llm_browser["url"] = llm_weblink
+        cfg["llm_browser"] = llm_browser
+
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(p)
+    except Exception:
+        pass
 
 # ------------------------------------------------------------------
 # Persistence (telemetry only; NOT control)
@@ -163,7 +185,22 @@ def main() -> int:
         return 4
 
     if r.status_code == 200:
-        scanner = (r.text or "").strip()
+        scanner = ""
+        llm_weblink = ""
+
+        # New API: JSON
+        try:
+            data = r.json()
+            if isinstance(data, dict):
+                scanner = (data.get("scanner") or "").strip()
+                llm_weblink = (data.get("llm_weblink") or "").strip()
+        except Exception:
+            data = None
+
+        # Backward compatibility: old API plain-text
+        if not scanner:
+            scanner = (r.text or "").strip()
+
         if not scanner:
             write_last_register(
                 status="error",
@@ -190,8 +227,14 @@ def main() -> int:
             )
             print(f"[register] ERROR: cannot write scanner_name.txt: {e}", file=sys.stderr)
             return 6
-        
+
+        # Keep your existing behavior
         update_voice_llm_session(scanner)
+
+        # New behavior: store per-Pi assigned ChatGPT link (if provided)
+        if llm_weblink:
+            update_voice_llm_weblink(llm_weblink)
+
         write_last_register(
             status="ok",
             detail=f"registered via {nms_base}",
@@ -200,6 +243,8 @@ def main() -> int:
             mac=mac,
             ip=ip,
         )
+
+        # Keep stdout compatible: print scanner name only
         print(scanner)
         return 0
 
