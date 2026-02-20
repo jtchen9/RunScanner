@@ -15,6 +15,12 @@ from voice.voice_llm import llm_runtime_ready
 REGISTER_PY = BASE_DIR / "register.py"
 SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"
 LAST_REGISTER_FILE = BASE_DIR / "last_register.json"
+STT_ECHO_FILE_DEFAULT = str(BASE_DIR / "voice" / "stt_echo.txt")
+_last_stt_echo_text = ""
+_last_center_base = ""   # last non-echo status shown
+REGISTER_RETRY_MS = 8000  # retry every 8s; tune as needed
+_register_retry_running = False
+
 
 # ---- Startup cached messages (for pre-GUI probes) ----
 status_box = None              # will be created later
@@ -52,6 +58,11 @@ def show_status(msg: str, log: bool = True):
     if log:
         log_records.append(msg)
 
+    # --- NEW: remember last non-echo content so echo can overlay without losing it ---
+    global _last_center_base
+    if not (msg or "").startswith("STT_ECHO"):
+        _last_center_base = msg
+
     global status_box
     if status_box is None:
         # GUI not created yet; cache for later display
@@ -61,7 +72,43 @@ def show_status(msg: str, log: bool = True):
     status_box.config(state="normal")
     status_box.delete("1.0", tk.END)
     status_box.insert(tk.END, msg)
+    status_box.see(tk.END)  
     status_box.config(state="disabled")
+
+def _voice_echo_enabled_and_file() -> tuple[bool, str]:
+    cfg = _voice_load_cfg()
+    en = bool(cfg.get("stt_echo_enabled", False))
+    fp = str(cfg.get("stt_echo_file") or STT_ECHO_FILE_DEFAULT).strip()
+    if not fp:
+        fp = STT_ECHO_FILE_DEFAULT
+    return en, fp
+
+def _poll_stt_echo():
+    global _last_stt_echo_text
+
+    try:
+        enabled, fp = _voice_echo_enabled_and_file()
+        if enabled:
+            p = Path(fp)
+            txt = p.read_text(encoding="utf-8") if p.exists() else ""
+            txt = txt.strip()
+
+            # only repaint GUI if changed
+            lines = txt.splitlines()[-6:]
+            txt2 = "\n".join(lines).strip()
+
+            if txt != _last_stt_echo_text:
+                _last_stt_echo_text = txt2
+                overlay = (txt + "\n") if txt2 else "STT_ECHO\n(no text)\n"
+                show_status(_last_center_base + "\n\n" + overlay, log=False)
+        else:
+            # If disabled, do nothing (keeps base display stable)
+            _last_stt_echo_text = ""
+    except Exception:
+        pass
+
+    # 2 Hz is enough and cheap
+    root.after(500, _poll_stt_echo)
 
 def av_runtime_ready_probe() -> str:
     """
@@ -188,35 +235,69 @@ def read_register_status() -> str:
         return f"register={status} http={http_code} {detail}".strip()
     except Exception:
         return "register=unknown"
-    
-# def _run_systemctl(args):
-#     """
-#     Run systemctl. Try without sudo first; if that fails, retry with sudo -n.
-#     Returns (ok: bool, stdout: str, stderr: str)
-#     """
-#     # 1) try without sudo
-#     try:
-#         cp = subprocess.run(
-#             [SYSTEMCTL] + args,
-#             check=True,
-#             capture_output=True,
-#             text=True,
-#             stdin=subprocess.DEVNULL,
-#         )
-#         return True, cp.stdout.strip(), cp.stderr.strip()
-#     except subprocess.CalledProcessError as e1:
-#         # 2) retry with sudo -n
-#         try:
-#             cp2 = subprocess.run(
-#                 [SUDO, "-n", SYSTEMCTL] + args,
-#                 check=True,
-#                 capture_output=True,
-#                 text=True,
-#                 stdin=subprocess.DEVNULL,
-#             )
-#             return True, cp2.stdout.strip(), cp2.stderr.strip()
-#         except subprocess.CalledProcessError as e2:
-#             return False, (e2.stdout or "").strip(), (e2.stderr or e1.stderr or "").strip()
+
+def _is_registered_ok(name: str, reg_status: str) -> bool:
+    # success criterion: scanner_name exists AND last_register shows ok (or http=200)
+    s = (reg_status or "").lower()
+    if not name:
+        return False
+    if "register=ok" in s:
+        return True
+    if "http=200" in s:
+        return True
+    return False
+
+def _refresh_registration_ui(log: bool = True) -> None:
+    """Reload scanner_name + register_status, then update the center display."""
+    global scanner_name, register_status
+    scanner_name = read_scanner_name()
+    register_status = read_register_status()
+    show_status(f"Scanner: {scanner_name or '(unassigned)'}\n{register_status}", log=log)
+
+def _register_retry_tick() -> None:
+    """
+    Try register.py again (best-effort). If still not registered, schedule next retry.
+    Runs in GUI thread via root.after(), so it won't freeze.
+    """
+    global _register_retry_running
+
+    # Always re-try registration (it is already best-effort + timeout=10)
+    run_register_once()
+
+    # Update state + UI
+    scanner_name_now = read_scanner_name()
+    reg_status_now = read_register_status()
+    scanner_ok = _is_registered_ok(scanner_name_now, reg_status_now)
+
+    # Update global vars and display
+    _refresh_registration_ui(log=True)
+
+    if scanner_ok:
+        _register_retry_running = False
+        return
+
+    # Not ready yet → keep retrying
+    _register_retry_running = True
+    root.after(REGISTER_RETRY_MS, _register_retry_tick)
+
+def start_register_retry_if_needed() -> None:
+    """
+    Call once after GUI is up. If already registered -> do nothing.
+    If not -> start retry loop.
+    """
+    global _register_retry_running
+
+    scanner_name_now = read_scanner_name()
+    reg_status_now = read_register_status()
+
+    if _is_registered_ok(scanner_name_now, reg_status_now):
+        _register_retry_running = False
+        return
+
+    if not _register_retry_running:
+        _register_retry_running = True
+        # small delay so network-manager has a chance to settle
+        root.after(2000, _register_retry_tick)
 
 def _run_systemctl(args):
     """
@@ -410,7 +491,28 @@ def function13():
     threading.Thread(target=worker, daemon=True).start()
 
 def function23():
-    show_status("Hello B23!")
+    def worker():
+        cfg = _voice_load_cfg()
+        cur = bool(cfg.get("stt_echo_enabled", False))
+        cfg["stt_echo_enabled"] = (not cur)
+        if "stt_echo_file" not in cfg:
+            cfg["stt_echo_file"] = STT_ECHO_FILE_DEFAULT
+
+        ok = _voice_save_cfg(cfg)
+        def ui():
+            if ok:
+                if cfg["stt_echo_enabled"]:
+                    state = "ON"  
+                    button23.config(text="STT_Echo: ON")
+                else:
+                    state = "OFF"
+                    button23.config(text="STT_Echo: OFF")
+                show_status(f"{_last_center_base}\n\nSTT_ECHO toggled {state}", log=True)
+            else:
+                show_status("STT_ECHO toggle FAILED (cannot write voice_config.json)", log=True)
+        root.after(0, ui)
+
+    threading.Thread(target=worker, daemon=True).start()
 
 log_records = []   # will store all messages
 _last_gui_mode = None
@@ -424,7 +526,7 @@ except Exception as e:
     show_status(av_report, log=True)
 
 # ---- Registration (after AV probe) ----
-run_register_once()
+# run_register_once()
 scanner_name = read_scanner_name()
 register_status = read_register_status()
 
@@ -449,10 +551,11 @@ status_box.config(state="disabled")  # make it read-only
 if startup_messages:
     show_status(startup_messages[-1], log=False)  # show last cached report on screen
 
-show_status(f"Scanner: {scanner_name or '(unassigned)'}\n{register_status}", log=True)
-
 # Show registration info at GUI startup
 show_status(f"Scanner: {scanner_name or '(unassigned)'}\n{register_status}", log=True)
+
+# Kick off registration retries if boot network wasn't ready
+start_register_retry_if_needed()
 
 # ---- Button styles ----
 style = ttk.Style()
@@ -492,7 +595,10 @@ button20.grid(row=2, column=0, sticky="EWNS")
 button13 = ttk.Button(root, text="Scan Channel", command=function13)
 button13.grid(row=1, column=3, sticky="EWNS")
 
-button23 = ttk.Button(root, text="B23", command=function23)
+if _voice_load_cfg().get("stt_echo_enabled", False):
+    button23 = ttk.Button(root, text="STT Echo ON", command=function23)
+else: 
+    button23 = ttk.Button(root, text="STT Echo OFF", command=function23)
 button23.grid(row=2, column=3, sticky="EWNS")
 
 # Detect actual service state at startup so UI matches reality
@@ -521,5 +627,6 @@ def _poll_voice_mode():
     
 _update_voice_button_label()
 _poll_voice_mode()
+_poll_stt_echo()
 
 root.mainloop()

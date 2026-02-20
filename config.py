@@ -35,6 +35,7 @@ def local_ts() -> str:
 NMS_CANDIDATES = [
     "http://192.168.137.3:8000",  # primary (normal lab)
     "http://192.168.137.1:8000",  # fallback (dev / laptop)
+    "http://192.168.43.140:8000",  # fallback (dev / laptop)
 ]
 
 NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"

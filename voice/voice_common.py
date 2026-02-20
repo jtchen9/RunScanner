@@ -21,6 +21,87 @@ ALLOW_CALLSIGN_ONLY = True
 BASE_DIR = Path("/home/pi/_RunScanner")
 VOICE_DIR = BASE_DIR / "voice"
 VOICE_LOG_FILE = VOICE_DIR / "voice_service.log"
+DEFAULT_CALLSIGNS = [
+    "alpha","bravo","charlie","delta","echo","foxtrot","golf","hotel","india","julia"
+]
+
+
+def _prefix_score(toks: list[str]) -> float:
+    """
+    Score how strongly prefixes are present.
+    We keep it tolerant, but measurable for ranking.
+    """
+    best = 0.0
+    for t in toks:
+        best = max(best, _ratio(t, "twin"), _ratio(t, "scout"))
+    return best
+
+def _callsign_score(toks: list[str], callsign: str) -> float:
+    best = 0.0
+    for t in toks:
+        _, r = best_token_match(t, [callsign])
+        best = max(best, r)
+    return best
+
+def match_wake_name_ranked(
+    text_norm: str,
+    *,
+    callsign: str,
+    all_callsigns: list[str] | None = None,
+    min_callsign_ratio: float = CALLSIGN_MIN_RATIO,
+    min_prefix_ratio: float = PREFIX_MIN_RATIO,
+    min_margin: float = 0.06,
+) -> tuple[bool, str]:
+    """
+    Ranked wake decision:
+      - compute score for each callsign in all_callsigns
+      - accept only if THIS callsign is the best and wins by min_margin
+      - keep the original prefix rule, but use it consistently
+
+    Why this helps:
+      - prevents alpha<->bravo when both are "kind of similar" in STT output
+      - tunable with min_margin
+    """
+    toks = (text_norm or "").split()
+    if not toks:
+        return False, "no tokens"
+
+    all_callsigns = all_callsigns or DEFAULT_CALLSIGNS
+
+    # score components
+    pref = _prefix_score(toks)  # 0..1
+    prefix_ok = (pref >= min_prefix_ratio)
+
+    # compute per-callsign best token ratio
+    cs_scores: dict[str, float] = {}
+    for cs in all_callsigns:
+        cs_scores[cs] = _callsign_score(toks, cs)
+
+    # rank
+    ranked = sorted(cs_scores.items(), key=lambda kv: kv[1], reverse=True)
+    best_cs, best_r = ranked[0]
+    second_r = ranked[1][1] if len(ranked) > 1 else 0.0
+
+    # enforce "my callsign must be the best"
+    if best_cs != callsign:
+        return False, f"rank_no(best={best_cs}:{best_r:.2f} mine={callsign}:{cs_scores.get(callsign,0.0):.2f} second={second_r:.2f} prefix={pref:.2f})"
+
+    # enforce callsign minimum
+    if best_r < min_callsign_ratio:
+        return False, f"callsign_no(best={best_r:.2f} min={min_callsign_ratio:.2f} prefix={pref:.2f})"
+
+    # enforce prefix rule
+    if not prefix_ok and not ALLOW_CALLSIGN_ONLY:
+        return False, f"prefix_no(prefix={pref:.2f} min={min_prefix_ratio:.2f} best={best_r:.2f})"
+
+    # enforce separation margin (this is the key for alpha/bravo separation)
+    if (best_r - second_r) < min_margin:
+        return False, f"margin_no(best={best_r:.2f} second={second_r:.2f} margin={(best_r-second_r):.2f} need={min_margin:.2f} prefix={pref:.2f})"
+
+    # accepted
+    if prefix_ok:
+        return True, f"ok(rank+prefix best={best_r:.2f} second={second_r:.2f} prefix={pref:.2f})"
+    return True, f"ok(rank+callsign-only best={best_r:.2f} second={second_r:.2f} prefix={pref:.2f})"
 
 # Config IO lives in voice_config.py (single source of truth)
 from voice_config import load_voice_config, save_voice_config, update_voice_config

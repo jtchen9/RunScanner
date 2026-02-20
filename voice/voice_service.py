@@ -34,6 +34,7 @@ from voice_common import (
     voice_log,
     normalize_text,
     match_wake_name,
+    match_wake_name_ranked,
 )
 from voice_rt_stt import init_vosk, stt_loop_once
 from voice_llm import llm_exchange
@@ -42,6 +43,58 @@ HEARTBEAT_SEC = 10
 IDLE_SLEEP_SEC = 0.05
 
 TTS_SCRIPT = "/home/pi/_RunScanner/av/tts_say.sh"
+STT_ECHO_FALLBACK_FILE = "/home/pi/_RunScanner/voice/stt_echo.txt"
+
+def _cfg_int(cfg: Dict[str, Any], key: str, default: int) -> int:
+    try:
+        return int(cfg.get(key, default))
+    except Exception:
+        return default
+
+def _cfg_bool(cfg: Dict[str, Any], key: str, default: bool = False) -> bool:
+    v = cfg.get(key, default)
+    return bool(v)
+
+def _cfg_str(cfg: Dict[str, Any], key: str, default: str = "") -> str:
+    s = cfg.get(key, default)
+    return str(s).strip()
+
+def _stt_echo_write(cfg: Dict[str, Any], *, mode: str, raw: str, norm: str, extra: str = "") -> None:
+    """
+    Echo STT to file for GUI to display.
+    Atomic write to avoid partial reads.
+    """
+    if not _cfg_bool(cfg, "stt_echo_enabled", False):
+        return
+
+    path = _cfg_str(cfg, "stt_echo_file", STT_ECHO_FALLBACK_FILE) or STT_ECHO_FALLBACK_FILE
+    p = Path(path)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        line1 = f"STT_ECHO  mode={mode}  time={time.strftime('%H:%M:%S')}"
+        line2 = f"RAW : {raw}"
+        line3 = f"NORM: {norm}"
+        line4 = f"INFO: {extra}" if extra else ""
+        text = "\n".join([line1, line2, line3] + ([line4] if line4 else [])) + "\n"
+
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(p)
+    except Exception:
+        # never break voice loop due to echo
+        pass
+
+def _apply_chunk_sec_for_mode(cfg: Dict[str, Any], mode: str) -> None:
+    """
+    Enforce chunk_sec by mode:
+      - name_listen: chunk_sec_name_listen (default 2)
+      - conversation: chunk_sec_conversation (default 1)
+    Writes cfg['chunk_sec'] so stt_loop_once() uses it immediately.
+    """
+    if mode == "name_listen":
+        cfg["chunk_sec"] = _cfg_int(cfg, "chunk_sec_name_listen", 2)
+    elif mode == "conversation":
+        cfg["chunk_sec"] = _cfg_int(cfg, "chunk_sec_conversation", 1)
 
 def _cue_listen(cfg: Dict[str, Any]) -> None:
     # short audio cue before recording (uses working TTS path)
@@ -90,6 +143,7 @@ def _enter_mode(cfg: Dict[str, Any], new_mode: str, *, reason: str = "") -> Tupl
     Returns: (mode, enter_ts)
     """
     new_mode = _sanitize_mode(new_mode)
+    _apply_chunk_sec_for_mode(cfg, new_mode)
 
     # Persist mode
     save_voice_config({**cfg, "mode": new_mode})
@@ -526,15 +580,18 @@ def main() -> None:
                         matched = (len(norm) >= min_chars)
                         why = f"test_wake_always(min_chars={min_chars})"
                     else:
-                        matched, why = match_wake_name(norm, callsign=callsign)
+                        # matched, why = match_wake_name(norm, callsign=callsign)
+                        matched, why = match_wake_name_ranked(norm, callsign=callsign)
 
                     voice_log(f"RT_STT: heard raw='{raw}' norm='{norm}' wake={matched} why={why}")
+                    _stt_echo_write(cfg, mode="name_listen", raw=raw, norm=norm, extra=f"wake={matched} why={why}")
 
                     if matched:
                         # Enter conversation (this will also speak conversation_enter_say)
                         mode, mode_enter_ts = _enter_mode(cfg, "conversation", reason="wake_match")
                 else:
                     voice_log(f"RT_STT: chunk error: {raw}")
+                    _stt_echo_write(cfg, mode="name_listen", raw=raw, norm="", extra="chunk_error")
                     time.sleep(0.2)
 
                 time.sleep(IDLE_SLEEP_SEC)
@@ -556,6 +613,8 @@ def main() -> None:
                 if ok:
                     norm = normalize_text(norm)
                     voice_log(f"RT_STT: heard raw='{raw}' norm='{norm}'")
+                    _stt_echo_write(cfg, mode="conversation", raw=raw, norm=norm)
+
                     # any usable speech keeps conversation alive
                     test_easy = _cfg_bool(cfg, "test_easy_match", False)
                     min_chars = _cfg_int(cfg, "test_min_chars", 1) if test_easy else 3
@@ -613,6 +672,7 @@ def main() -> None:
                         break
                 else:
                     voice_log(f"RT_STT: chunk error: {raw}")
+                    _stt_echo_write(cfg, mode="conversation", raw=raw, norm="", extra="chunk_error")
                     time.sleep(0.2)
 
                 time.sleep(IDLE_SLEEP_SEC)
