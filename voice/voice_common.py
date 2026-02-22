@@ -26,15 +26,22 @@ DEFAULT_CALLSIGNS = [
 ]
 
 
+# def _prefix_score(toks: list[str]) -> float:
+#     """
+#     Score how strongly prefixes are present.
+#     We keep it tolerant, but measurable for ranking.
+#     """
+#     best = 0.0
+#     for t in toks:
+#         best = max(best, _ratio(t, "twin"), _ratio(t, "scout"))
+#     return best
 def _prefix_score(toks: list[str]) -> float:
-    """
-    Score how strongly prefixes are present.
-    We keep it tolerant, but measurable for ranking.
-    """
-    best = 0.0
+    best_twin = 0.0
+    best_scout = 0.0
     for t in toks:
-        best = max(best, _ratio(t, "twin"), _ratio(t, "scout"))
-    return best
+        best_twin = max(best_twin, _ratio(t, "twin"))
+        best_scout = max(best_scout, _ratio(t, "scout"))
+    return min(best_twin, best_scout)   # requires both
 
 def _callsign_score(toks: list[str], callsign: str) -> float:
     best = 0.0
@@ -50,7 +57,7 @@ def match_wake_name_ranked(
     all_callsigns: list[str] | None = None,
     min_callsign_ratio: float = CALLSIGN_MIN_RATIO,
     min_prefix_ratio: float = PREFIX_MIN_RATIO,
-    min_margin: float = 0.06,
+    min_margin: float = 0.15,
 ) -> tuple[bool, str]:
     """
     Ranked wake decision:
@@ -172,12 +179,52 @@ def normalize_text(s: str) -> str:
 
     # Canonicalize common recognition variants
     canon = {
+        # common prefix confusions
         "twins": "twin",
+        "twinss": "twin",
         "skull": "scout",
+        "scowt": "scout",
+        "scoutt": "scout",
+        "call": "scout",
+        "calls": "scout",
+
+        # callsign variants (10 robots)
         "alfa": "alpha",
+        "alphas": "alpha",
+
         "bravo": "bravo",
-        "alpha": "alpha",
-    }
+        "bravos": "bravo",
+
+        "charley": "charlie",
+        "chalie": "charlie",
+        "charli": "charlie",
+
+        "deltha": "delta",
+        "deltah": "delta",
+        "delta": "delta",
+
+        "eco": "echo",
+        "ecko": "echo",
+        "echo": "echo",
+
+        "fox": "foxtrot",
+        "foxtrots": "foxtrot",
+        "foxtrot": "foxtrot",
+
+        "gulf": "golf",
+        "golff": "golf",
+        "golf": "golf",
+
+        "hotel": "hotel",
+        "hotell": "hotel",
+
+        "india": "india",
+        "indya": "india",
+
+        "julia": "julia",
+        "juliet": "julia",
+        "jullia": "julia",
+    }    
 
     toks = []
     for t in s.split():

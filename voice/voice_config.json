@@ -5,14 +5,19 @@
     "name_listen_timeout_sec": 300,
     "script": [
     {
-        "phrase": "lets talk",
+        "phrase": "talk",
         "reply": "",
         "action": "enter.llm"
     },
     {
-        "phrase": "how are you",
-        "reply": "Let me check the operating status.",
+        "phrase": "status",
+        "reply": "",
         "action": "status.report"
+    },
+    {
+        "phrase": "home",
+        "reply": "I am heading home.",
+        "action": ""
     }
     ],
     "stt_engine": "vosk",
@@ -30,7 +35,7 @@
     "test_phrase_always": false,
     "stt_echo_enabled": false,
     "stt_echo_file": "/home/pi/_RunScanner/voice/stt_echo.txt",
-    "chunk_sec_name_listen": 2,
+    "chunk_sec_name_listen": 3,
     "chunk_sec_conversation": 1,
 
     "deaf_enter_say": "I will stay quiet.",

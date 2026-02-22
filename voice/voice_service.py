@@ -87,12 +87,12 @@ def _stt_echo_write(cfg: Dict[str, Any], *, mode: str, raw: str, norm: str, extr
 def _apply_chunk_sec_for_mode(cfg: Dict[str, Any], mode: str) -> None:
     """
     Enforce chunk_sec by mode:
-      - name_listen: chunk_sec_name_listen (default 2)
+      - name_listen: chunk_sec_name_listen (default 3)
       - conversation: chunk_sec_conversation (default 1)
     Writes cfg['chunk_sec'] so stt_loop_once() uses it immediately.
     """
     if mode == "name_listen":
-        cfg["chunk_sec"] = _cfg_int(cfg, "chunk_sec_name_listen", 2)
+        cfg["chunk_sec"] = _cfg_int(cfg, "chunk_sec_name_listen", 3)
     elif mode == "conversation":
         cfg["chunk_sec"] = _cfg_int(cfg, "chunk_sec_conversation", 1)
 
@@ -663,6 +663,7 @@ def main() -> None:
                             _speak_cfg(cfg, "Let me check the operation condition.", lead_ms=300)
                             summary = _run_status_summary()
                             _speak_cfg(cfg, summary, lead_ms=300)
+                            time.sleep(1.2)
 
                         # 3) Only way to enter llm_browser
                         if action == "enter.llm":

@@ -19,7 +19,8 @@ echo "[$(date '+%F %T')] tts_say.sh uid=$(id -u) user=$(id -un) TEXT_LEN=${#TEXT
 rm -f "$RAW" "$PAD" "$OUT"
 
 # 1) TTS -> wav
-/usr/bin/espeak-ng -s "$RATE" -a "$AMP" -w "$RAW" "$TEXT"
+# /usr/bin/espeak-ng -s "$RATE" -a "$AMP" -w "$RAW" "$TEXT"
+pico2wave -l en-US -w "$RAW" "$TEXT"
 
 # 2) lead-in silence
 /usr/bin/ffmpeg -hide_banner -loglevel error \
@@ -30,10 +31,17 @@ PY
 )" \
   -c:a pcm_s16le "$PAD"
 
-# 3) concat silence + speech
+# # 3) concat silence + speech
+# /usr/bin/ffmpeg -hide_banner -loglevel error \
+#   -i "$PAD" -i "$RAW" \
+#   -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[a]" -map "[a]" \
+#   -ar 48000 -ac 1 -c:a pcm_s16le "$OUT"
+
+# 3) concat silence + speech + boost (Pico is quieter) + limiter (avoid clipping)
 /usr/bin/ffmpeg -hide_banner -loglevel error \
   -i "$PAD" -i "$RAW" \
-  -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1[a]" -map "[a]" \
+  -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1,volume=2.0,alimiter=limit=0.98[a]" \
+  -map "[a]" \
   -ar 48000 -ac 1 -c:a pcm_s16le "$OUT"
 
 # 4) PLAYBACK: FORCE ALSA DEFAULT (robust vs PipeWire HDMI sink reorder)
