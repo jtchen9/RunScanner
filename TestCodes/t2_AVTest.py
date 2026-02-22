@@ -540,10 +540,9 @@ def main() -> int:
         admin_reset_keep_all(nms_base)
 
         pause("STEP 4: POST /registry/register (Pi-facing) using MAC from config.get_reg_iface()")
-        iface = config.get_reg_iface()
-        mac = config.get_mac_address(iface)
+        mac = config.get_mac_address()
         if not mac:
-            die(f"Could not read MAC from iface={iface} (config.get_mac_address returned empty)")
+            die(f"Could not read MAC from iface(config.get_mac_address returned empty)")
         bundle_ver = config.get_bundle_version()
 
         assigned = pi_register(nms_base, mac=mac, ip=TEST_IP, scanner_version=bundle_ver)

@@ -130,12 +130,12 @@ LAST_REGISTER_FILE = BASE_DIR / "last_register.json"
 
 REG_IFACE_DEFAULT = "wlan0"
 
-def get_reg_iface() -> str:
-    return os.getenv("REG_IFACE", REG_IFACE_DEFAULT)
+# def get_reg_iface() -> str:
+#     return os.getenv("REG_IFACE", REG_IFACE_DEFAULT)
 
-def get_mac_address(iface: str) -> str:
+def get_mac_address() -> str:
     try:
-        with open(f"/sys/class/net/{iface}/address") as f:
+        with open(f"/sys/class/net/{REG_IFACE_DEFAULT}/address") as f:
             return f.read().strip().lower()
     except Exception:
         return ""

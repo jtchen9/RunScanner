@@ -10,7 +10,7 @@ import requests
 from config import (
     BASE_DIR,
     get_nms_base,
-    get_reg_iface,
+    # get_reg_iface,
     get_bundle_version,
     get_mac_address,
     SCANNER_NAME_FILE,
@@ -140,14 +140,14 @@ def main() -> int:
     except Exception:
         pass
 
-    iface = get_reg_iface()
-    mac = get_mac_address(iface)
+    # iface = get_reg_iface()
+    mac = get_mac_address()
     if not mac:
         write_last_register(
             status="error",
-            detail=f"Cannot read MAC for iface={iface}",
+            detail=f"Cannot read MAC for iface",
         )
-        print(f"[register] ERROR: cannot read MAC for iface={iface}", file=sys.stderr)
+        print(f"[register] ERROR: cannot read MAC for iface", file=sys.stderr)
         return 2
 
     nms_base = get_nms_base()
@@ -185,19 +185,21 @@ def main() -> int:
         return 4
 
     if r.status_code == 200:
+        # ------------------------------------------------------------------
+        # 1. Extract scanner name (JSON preferred, fallback to plain text)
+        # ------------------------------------------------------------------
         scanner = ""
         llm_weblink = ""
 
-        # New API: JSON
         try:
             data = r.json()
             if isinstance(data, dict):
                 scanner = (data.get("scanner") or "").strip()
                 llm_weblink = (data.get("llm_weblink") or "").strip()
         except Exception:
-            data = None
+            # Not JSON — old API compatibility
+            pass
 
-        # Backward compatibility: old API plain-text
         if not scanner:
             scanner = (r.text or "").strip()
 
@@ -212,10 +214,14 @@ def main() -> int:
             print("[register] ERROR: empty scanner name returned", file=sys.stderr)
             return 5
 
+        # ------------------------------------------------------------------
+        # 2. Authoritative overwrite of scanner_name.txt
+        #    (Always overwrite. Never preserve old value.)
+        # ------------------------------------------------------------------
         try:
-            tmp = SCANNER_NAME_FILE.with_suffix(".tmp")
-            tmp.write_text(scanner + "\n", encoding="utf-8")
-            tmp.replace(SCANNER_NAME_FILE)
+            tmp_file = SCANNER_NAME_FILE.with_suffix(".tmp")
+            tmp_file.write_text(scanner + "\n", encoding="utf-8")
+            tmp_file.replace(SCANNER_NAME_FILE)
         except Exception as e:
             write_last_register(
                 status="error",
@@ -228,13 +234,17 @@ def main() -> int:
             print(f"[register] ERROR: cannot write scanner_name.txt: {e}", file=sys.stderr)
             return 6
 
-        # Keep your existing behavior
+        # ------------------------------------------------------------------
+        # 3. Optional session configuration
+        # ------------------------------------------------------------------
         update_voice_llm_session(scanner)
 
-        # New behavior: store per-Pi assigned ChatGPT link (if provided)
         if llm_weblink:
             update_voice_llm_weblink(llm_weblink)
 
+        # ------------------------------------------------------------------
+        # 4. Write telemetry record
+        # ------------------------------------------------------------------
         write_last_register(
             status="ok",
             detail=f"registered via {nms_base}",
@@ -244,7 +254,7 @@ def main() -> int:
             ip=ip,
         )
 
-        # Keep stdout compatible: print scanner name only
+        # Keep stdout compatible for caller
         print(scanner)
         return 0
 
