@@ -7,11 +7,16 @@ Keeps *all* Wave-2 voice files under /home/pi/_RunScanner/voice
 """
 
 from __future__ import annotations
-
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 import re
 from difflib import SequenceMatcher
+
+from voice_config import (
+        ensure_voice_config,
+        load_voice_config,
+        update_voice_config,
+    )
 
 CALLSIGN_MIN_RATIO = 0.82   # stricter (prevents alpha<->bravo)
 PREFIX_MIN_RATIO   = 0.70   # looser (twin/scout can be misheard a bit)

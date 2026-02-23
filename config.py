@@ -13,8 +13,16 @@ import requests
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
+import socket
+import ipaddress
+import concurrent.futures
 
+SYSTEMCTL = "/usr/bin/systemctl"
+SUDO = "/usr/bin/sudo"
 BASE_DIR = Path("/home/pi/_RunScanner")
+NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
+NMS_TIMEOUT_SEC = 2
+NMS_PORT = 8000
 
 # ------------------------------------------------------------------
 # Time (MUST match NMS)
@@ -28,16 +36,8 @@ def local_ts() -> str:
     return datetime.now().strftime(TIME_FMT)
 
 # ------------------------------------------------------------------
-# NMS discovery
+# bundle
 # ------------------------------------------------------------------
-
-# Ordered preference list
-NMS_CANDIDATES = [
-    "http://192.168.137.3:8000",  # primary (normal lab)
-    "http://192.168.137.1:8000",  # fallback (dev / laptop)
-    "http://192.168.43.140:8000",  # fallback (dev / laptop)
-]
-
 NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
 NMS_TIMEOUT_SEC = 3
 
@@ -59,6 +59,9 @@ def get_bundle_version() -> str:
     except Exception:
         return "0"
 
+# ------------------------------------------------------------------
+# NMS discovery
+# ------------------------------------------------------------------
 def _probe_nms(base: str) -> bool:
     """Return True if NMS /health responds."""
     try:
@@ -67,36 +70,83 @@ def _probe_nms(base: str) -> bool:
     except Exception:
         return False
 
+def _get_local_ip() -> Optional[str]:
+    """
+    Get current primary IP (routing-based).
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("1.1.1.1", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return None
+
+def _scan_ip(ip: str) -> Optional[str]:
+    """
+    Try probing a single IP for NMS.
+    """
+    base = f"http://{ip}:{NMS_PORT}"
+    if _probe_nms(base):
+        return base
+    return None
+
+def _scan_subnet_for_nms() -> Optional[str]:
+    """
+    Scan local /24 subnet for port 8000 NMS.
+    Uses thread pool for speed.
+    """
+    local_ip = _get_local_ip()
+    if not local_ip:
+        return None
+
+    try:
+        net = ipaddress.ip_network(local_ip + "/24", strict=False)
+    except Exception:
+        return None
+
+    # skip network/broadcast
+    hosts = [str(ip) for ip in net.hosts()]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+        futures = {executor.submit(_scan_ip, ip): ip for ip in hosts}
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result:
+                executor.shutdown(cancel_futures=True)
+                return result
+
+    return None
+
 def discover_nms_base(force: bool = False) -> Optional[str]:
     """
     Discover reachable NMS and cache it.
 
     Priority:
     1) cached value (if still alive)
-    2) ordered NMS_CANDIDATES probe
+    2) subnet scan
     """
+
+    # 1. cached
     if not force and NMS_CACHE_FILE.exists():
         cached = NMS_CACHE_FILE.read_text().strip()
         if cached and _probe_nms(cached):
             return cached
 
-    for base in NMS_CANDIDATES:
-        if _probe_nms(base):
-            try:
-                NMS_CACHE_FILE.write_text(base, encoding="utf-8")
-            except Exception:
-                pass
-            return base
+    # 2. subnet scan
+    found = _scan_subnet_for_nms()
+    if found:
+        try:
+            NMS_CACHE_FILE.write_text(found, encoding="utf-8")
+        except Exception:
+            pass
+        return found
 
     return None
 
 def get_nms_base() -> Optional[str]:
-    """Return active NMS base URL, or None if unavailable."""
     return discover_nms_base(force=False)
-
-
-SYSTEMCTL = "/usr/bin/systemctl"
-SUDO = "/usr/bin/sudo"
 
 # ------------------------------------------------------------------
 # System-wide endpoints (shared across the entire system)

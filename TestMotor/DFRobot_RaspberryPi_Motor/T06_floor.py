@@ -22,3 +22,16 @@ m.motor_movement([m.M2], m.CW,  CRUISE)
 time.sleep(10.0)
 
 m.motor_stop(m.ALL)
+time.sleep(5.0)
+
+# kick 3s
+m.motor_movement([m.M1], m.CW, KICK)  # right forward
+m.motor_movement([m.M2], m.CCW,  KICK)  # left forward
+time.sleep(0.35)
+
+# cruise 7s
+m.motor_movement([m.M1], m.CW, CRUISE)
+m.motor_movement([m.M2], m.CCW,  CRUISE)
+time.sleep(10.0)
+
+m.motor_stop(m.ALL)

@@ -19,6 +19,19 @@ time.sleep(0.35)
 # cruise
 m.motor_movement([m.M1], m.CW, CRUISE)
 m.motor_movement([m.M2], m.CW, CRUISE)
-time.sleep(10)
+time.sleep(5)
+
+m.motor_stop(m.ALL)
+time.sleep(5)
+
+# kick
+m.motor_movement([m.M1], m.CCW, KICK)
+m.motor_movement([m.M2], m.CCW, KICK)
+time.sleep(0.35)
+
+# cruise
+m.motor_movement([m.M1], m.CCW, CRUISE)
+m.motor_movement([m.M2], m.CCW, CRUISE)
+time.sleep(5)
 
 m.motor_stop(m.ALL)

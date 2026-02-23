@@ -6,7 +6,7 @@ import subprocess
 import threading
 import json
 from pathlib import Path
-from config import local_ts
+from config import local_ts, get_nms_base, NMS_CACHE_FILE
 from config import get_bundle_version
 import shutil
 from config import BASE_DIR, SYSTEMCTL, SUDO, SERVICE_SCANNER_POLLER
@@ -235,24 +235,78 @@ def read_register_status() -> str:
         return f"register={status} http={http_code} {detail}".strip()
     except Exception:
         return "register=unknown"
+    
+def _nms_is_reachable_now() -> bool:
+    """
+    True if get_nms_base() can find a reachable NMS right now.
+    This uses your config.py discovery (cached + probes or subnet scan).
+    """
+    try:
+        return bool(get_nms_base())
+    except Exception:
+        return False
 
 def _is_registered_ok(name: str, reg_status: str) -> bool:
-    # success criterion: scanner_name exists AND last_register shows ok (or http=200)
-    s = (reg_status or "").lower()
+    """
+    Registration is valid only if:
+      - scanner_name exists
+      - last_register says ok (or http=200)
+      - AND NMS is reachable now (liveness)
+    """
     if not name:
         return False
-    if "register=ok" in s:
-        return True
-    if "http=200" in s:
-        return True
-    return False
+
+    s = (reg_status or "").lower()
+    ok_flag = ("register=ok" in s) or ("http=200" in s)
+    if not ok_flag:
+        return False
+
+    # Liveness check
+    return _nms_is_reachable_now()
+
+def _clear_stale_registration_files(clear_nms_cache: bool = False) -> None:
+    """
+    Step-2: remove stale local identity so GUI cannot claim success when offline.
+    We keep it conservative:
+      - Always remove scanner_name.txt and last_register.json when deemed stale
+      - Optionally also remove nms_base.txt (cache) to force rediscovery
+    """
+    # scanner_name.txt
+    try:
+        if SCANNER_NAME_FILE.exists():
+            SCANNER_NAME_FILE.unlink()
+    except Exception:
+        pass
+
+    # last_register.json
+    try:
+        if LAST_REGISTER_FILE.exists():
+            LAST_REGISTER_FILE.unlink()
+    except Exception:
+        pass
+
+    # nms_base.txt (optional)
+    if clear_nms_cache:
+        try:
+            if NMS_CACHE_FILE.exists():
+                NMS_CACHE_FILE.unlink()
+        except Exception:
+            pass
 
 def _refresh_registration_ui(log: bool = True) -> None:
     """Reload scanner_name + register_status, then update the center display."""
     global scanner_name, register_status
+
     scanner_name = read_scanner_name()
     register_status = read_register_status()
-    show_status(f"Scanner: {scanner_name or '(unassigned)'}\n{register_status}", log=log)
+
+    nms_state = "online" if _nms_is_reachable_now() else "offline"
+    show_status(
+        f"Scanner: {scanner_name or '(unassigned)'}\n"
+        f"NMS: {nms_state}\n"
+        f"{register_status}",
+        log=log
+    )
 
 def _register_retry_tick() -> None:
     """
@@ -261,43 +315,53 @@ def _register_retry_tick() -> None:
     """
     global _register_retry_running
 
-    # Always re-try registration (it is already best-effort + timeout=10)
+    # Attempt registration (best-effort + timeout inside register.py)
     run_register_once()
 
-    # Update state + UI
-    scanner_name_now = read_scanner_name()
-    reg_status_now = read_register_status()
-    scanner_ok = _is_registered_ok(scanner_name_now, reg_status_now)
-
-    # Update global vars and display
+    # Refresh UI from files
     _refresh_registration_ui(log=True)
 
-    if scanner_ok:
+    # Decide if we are truly registered (includes liveness)
+    name_now = read_scanner_name()
+    reg_now = read_register_status()
+    if _is_registered_ok(name_now, reg_now):
         _register_retry_running = False
         return
 
-    # Not ready yet → keep retrying
+    # If not registered, we *must not* keep stale identity around.
+    # Clear stale files so GUI never "sticks" to old success.
+    # clear_nms_cache=True is optional; I recommend False normally
+    # because you WANT to reuse last good NMS when it still exists.
+    _clear_stale_registration_files(clear_nms_cache=False)
+
     _register_retry_running = True
     root.after(REGISTER_RETRY_MS, _register_retry_tick)
 
 def start_register_retry_if_needed() -> None:
     """
-    Call once after GUI is up. If already registered -> do nothing.
-    If not -> start retry loop.
+    Call once after GUI is up.
+    If already registered (including NMS liveness) -> do nothing.
+    Else start retry loop.
     """
     global _register_retry_running
 
-    scanner_name_now = read_scanner_name()
-    reg_status_now = read_register_status()
+    # Always refresh once at start
+    _refresh_registration_ui(log=True)
 
-    if _is_registered_ok(scanner_name_now, reg_status_now):
+    name_now = read_scanner_name()
+    reg_now = read_register_status()
+
+    if _is_registered_ok(name_now, reg_now):
         _register_retry_running = False
         return
 
+    # Not valid: clear stale right away so UI can't lie
+    _clear_stale_registration_files(clear_nms_cache=False)
+    _refresh_registration_ui(log=True)
+
     if not _register_retry_running:
         _register_retry_running = True
-        # small delay so network-manager has a chance to settle
-        root.after(2000, _register_retry_tick)
+        root.after(2000, _register_retry_tick)  # allow Wi-Fi settle
 
 def _run_systemctl(args):
     """
@@ -555,7 +619,7 @@ if startup_messages:
 show_status(f"Scanner: {scanner_name or '(unassigned)'}\n{register_status}", log=True)
 
 # Kick off registration retries if boot network wasn't ready
-start_register_retry_if_needed()
+# start_register_retry_if_needed()
 
 # ---- Button styles ----
 style = ttk.Style()

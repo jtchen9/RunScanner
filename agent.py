@@ -57,7 +57,6 @@ from voice.voice_agent_api import (
     exec_voice_mode_set,
     exec_voice_script_set,
     exec_voice_llm_config_set,
-    exec_voice_llm_test,
 )
 
 REGISTER_PY = BASE_DIR / "register.py"
@@ -65,8 +64,8 @@ LOG_PATH = BASE_DIR / "agent.log"
 SCAN_SCRIPT = str(BASE_DIR / "scan_wifi.sh")
 
 # Runtime tuning
-POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", "5"))
-POLL_LIMIT = int(os.getenv("POLL_LIMIT", "10"))
+POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", "10"))
+POLL_LIMIT = int(os.getenv("POLL_LIMIT", "20"))
 HTTP_TIMEOUT_SEC = int(os.getenv("HTTP_TIMEOUT_SEC", "10"))
 REGISTER_RETRY_SEC = int(os.getenv("REGISTER_RETRY_SEC", "10"))
 OFFLINE_RETRY_SEC = int(os.getenv("OFFLINE_RETRY_SEC", "5"))
