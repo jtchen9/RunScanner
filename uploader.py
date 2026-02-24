@@ -73,6 +73,10 @@ def post_once() -> bool:
         return False
 
     payload = build_payload(scanner)
+    if not payload.get("entries"):
+        log("skip upload: no scan entries")
+        return False
+
     url = f"{nms_base}/ingest/{scanner}"
 
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -82,7 +86,15 @@ def post_once() -> bool:
         r = requests.post(url, data=body, headers=headers, timeout=HTTP_TIMEOUT_SEC)
         if 200 <= r.status_code < 300:
             log(f"UPLOAD ok scanner={scanner} via={nms_base} status={r.status_code} bytes={len(body)}")
+
+            try:
+                if LATEST_JSON_FILE.exists():
+                    LATEST_JSON_FILE.unlink()
+            except Exception as e:
+                log(f"warning: failed to delete {LATEST_JSON_FILE}: {e}")
+
             return True
+        
         log(f"UPLOAD fail scanner={scanner} via={nms_base} status={r.status_code} body={r.text[:200]}")
         return False
     except Exception as e:

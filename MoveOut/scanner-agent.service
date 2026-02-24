@@ -9,7 +9,10 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/_RunScanner
 Environment=PYTHONPATH=/home/pi/_RunScanner:/home/pi/_RunScanner/voice
-ExecStartPre=/usr/bin/rm -f /home/pi/_RunScanner/nms_base.txt /home/pi/_RunScanner/scanner_name.txt /home/pi/_RunScanner/last_register.json
+# ExecStartPre=/usr/bin/rm -f /home/pi/_RunScanner/nms_base.txt /home/pi/_RunScanner/scanner_name.txt /home/pi/_RunScanner/last_register.json
+RuntimeDirectory=scanner-agent
+RuntimeDirectoryMode=0755
+ExecStartPre=/bin/bash -lc 'MARK=/run/scanner-agent/reg_cleaned; if [ ! -f "$MARK" ]; then rm -f /home/pi/_RunScanner/nms_base.txt /home/pi/_RunScanner/scanner_name.txt /home/pi/_RunScanner/last_register.json; touch "$MARK"; fi'
 ExecStartPre=/usr/bin/bash /home/pi/_RunScanner/register_until_ok.sh
 ExecStart=/usr/bin/python3 /home/pi/_RunScanner/agent.py
 Restart=always
