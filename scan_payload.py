@@ -34,19 +34,21 @@ def _read_latest_scan_entries() -> List[Dict[str, Any]]:
         return []
 
 
-def build_payload(scanner: str, iface: str) -> Dict[str, Any]:
-    """
-    Payload contract (Pi-side):
-    - scanner: identity string
-    - time: payload build timestamp (LOCAL time, TIME_FMT; matches NMS)
-    - iface: wlan0, etc
-    - entries: list of AP scan dicts from parse_iw.py
-    - time_format: explicit (telemetry only)
-    """
-    return {
-        "scanner": scanner,
-        "time": local_ts(),
-        "iface": iface,
-        "entries": _read_latest_scan_entries(),
-        "time_format": TIME_FMT,
-    }
+def build_payload(scanner: str, iface: str) -> list[dict]:
+    return  _read_latest_scan_entries()
+# def build_payload(scanner: str, iface: str) -> Dict[str, Any]:
+    # """
+    # Payload contract (Pi-side):
+    # - scanner: identity string
+    # - time: payload build timestamp (LOCAL time, TIME_FMT; matches NMS)
+    # - iface: wlan0, etc
+    # - entries: list of AP scan dicts from parse_iw.py
+    # - time_format: explicit (telemetry only)
+    # """
+    # return {
+    #     "scanner": scanner,
+    #     "time": local_ts(),
+    #     "iface": iface,
+    #     "entries": _read_latest_scan_entries(),
+    #     "time_format": TIME_FMT,
+    # }
