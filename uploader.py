@@ -73,7 +73,7 @@ def post_once() -> bool:
         return False
 
     payload = build_payload(scanner)
-    if not payload.get("entries"):
+    if not payload:   # empty list means no scan results
         log("skip upload: no scan entries")
         return False
 
