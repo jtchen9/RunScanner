@@ -58,6 +58,7 @@ from voice.voice_agent_api import (
     exec_voice_script_set,
     exec_voice_llm_config_set,
 )
+import subprocess
 
 REGISTER_PY = BASE_DIR / "register.py"
 LOG_PATH = BASE_DIR / "agent.log"
@@ -94,6 +95,7 @@ VOICE_ACTIONS = {
     # Wave-3
     "voice.llm.config.set": lambda args: exec_voice_llm_config_set(args),
 }
+SERVICE_AVSTREAM = "scanner-avstream.service"
 
 
 def log(msg: str) -> None:
@@ -177,8 +179,19 @@ def exec_scan_once() -> Tuple[bool, str]:
 def fetch_commands(nms_base: str, scanner: str) -> Tuple[bool, Dict[str, Any]]:
     """Returns (ok, payload). ok=False means network/parse error."""
     url = f"{nms_base}/cmd/poll/{scanner}"
+
+    # NEW: report AV streaming status (0/1)
+    av_streaming = _get_av_streaming_flag()
+
     try:
-        r = requests.get(url, params={"limit": POLL_LIMIT}, timeout=HTTP_TIMEOUT_SEC)
+        r = requests.get(
+            url,
+            params={
+                "limit": POLL_LIMIT,
+                "av_streaming": av_streaming,
+            },
+            timeout=HTTP_TIMEOUT_SEC,
+        )
         if r.status_code != 200:
             return False, {"error": f"http {r.status_code}", "text": r.text[:200]}
         return True, r.json()
@@ -242,7 +255,23 @@ def _write_json(p: Path, obj: Dict[str, Any]) -> Tuple[bool, str]:
         return True, f"wrote {p}"
     except Exception as e:
         return False, f"write_json failed {p}: {type(e).__name__}: {e}"
-
+    
+def _get_av_streaming_flag() -> int:
+    """
+    Return 1 if scanner-avstream.service is active, else 0.
+    Never raise exception.
+    """
+    try:
+        r = subprocess.run(
+            ["systemctl", "is-active", SERVICE_AVSTREAM],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        return 1 if r.stdout.strip() == "active" else 0
+    except Exception:
+        return 0
+    
 def exec_av_stream_start(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
     """
     Write av_stream_config.json then start scanner-avstream.service.
