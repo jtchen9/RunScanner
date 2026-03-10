@@ -58,7 +58,6 @@ from voice.voice_agent_api import (
     exec_voice_script_set,
     exec_voice_llm_config_set,
 )
-import subprocess
 
 REGISTER_PY = BASE_DIR / "register.py"
 LOG_PATH = BASE_DIR / "agent.log"
