@@ -160,7 +160,7 @@ def av_runtime_ready_probe() -> str:
 
     # 4) Quick hint (your known-good playback path)
     lines.append("Known-good audio test:")
-    lines.append("  mpv --ao=alsa --audio-device=alsa/default --no-video ~/music.mp3")
+    lines.append("  mpv --ao=alsa --audio-device=alsa/default --no-video /opt/_RunScanner/av/demo.mp3")
     lines.append("")
 
     return "\n".join(lines)

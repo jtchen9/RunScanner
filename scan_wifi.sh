@@ -19,7 +19,7 @@ scan_once() {
   : > "$OUT_CSV"
   : > "$OUT_JSON"
   # run iw (stderr -> debug file), pipe stdout to parser
-  if ! "$IW_BIN" dev "$IFACE" scan 2>/tmp/iw_err.txt | "$PARSER" "$OUT_CSV" "$OUT_JSON"; then
+  if ! "$IW_BIN" dev "$IFACE" scan 2>/tmp/iw_err.txt | /usr/bin/python3 "$PARSER" "$OUT_CSV" "$OUT_JSON"; then
     echo "Parser failed; see /tmp/iw_err.txt"
     return 1
   fi
