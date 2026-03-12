@@ -87,7 +87,7 @@ Returns ok, or error if JSON is invalid / `llm` is not an object.
     "provider": "openai",
     "base_url": "https://api.openai.com/v1/responses",
     "model": "gpt-4.1-mini",
-    "api_key_file": "/home/pi/.keys/openai.key",
+    "api_key_file": "",
     "timeout_sec": 30,
     "max_output_tokens": 250,
     "temperature": 0.4,

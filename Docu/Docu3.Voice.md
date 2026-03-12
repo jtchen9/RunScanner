@@ -223,10 +223,10 @@ Error → NAME_LISTENv
 ## NMS Commands (Wave-2)
 
 Command Summary
-Command          Category   Agent  GUI   Notes
-VOICE.MODE.SET    voice     ✅    ❌    DEAF / NAME_LISTEN only
-VOICE.SCRIPT.SET  voice     ✅    ❌    Scenario control
-VOICE.TEST.PROMPT voice     ❌    ✅    Debug only
+Command Category Agent GUI Notes
+VOICE.MODE.SET voice ✅ ❌ DEAF / NAME_LISTEN only
+VOICE.SCRIPT.SET voice ✅ ❌ Scenario control
+VOICE.TEST.PROMPT voice ❌ ✅ Debug only
 
 VOICE.START / VOICE.STOP are no longer scenario tools
 Voice service lifecycle is handled by systemd
@@ -259,7 +259,7 @@ Uses its own assigned name as wake-name
 
 **Observable:**
 systemctl status scanner-voice.service
-/home/pi/_RunScanner/voice/voice.log
+/opt/\_RunScanner/voice/voice.log
 
 ---
 
@@ -396,6 +396,7 @@ Replace the scripted phrase–response table used in CONVERSATION mode.
 }
 
 ```
+
 ```JSON
 {
   "commands": [
@@ -416,7 +417,7 @@ No cloud calls in Wave-2
 
 ---
 
-### GUI.BUTTON.VOICE.TEST.PROMPT 
+### GUI.BUTTON.VOICE.TEST.PROMPT
 
 **Purpose:**
 On-site test hook for voice output without microphone input.

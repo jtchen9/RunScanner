@@ -13,7 +13,7 @@ from voice_common import voice_log, load_voice_config
 import re
 
 _ID_SAFE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-LLM_STATE_PATH = Path("/home/pi/_RunScanner/voice/llm_state.json")
+LLM_STATE_PATH = Path("/opt/_RunScanner/voice/llm_state.json")
 
 def _now_ts() -> str:
     return time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())

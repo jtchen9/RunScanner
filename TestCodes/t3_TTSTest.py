@@ -28,7 +28,7 @@ import requests
 # ---------------------------------------------------------------------
 # Single source of truth: config.py (ensure import works no matter cwd)
 # ---------------------------------------------------------------------
-BASE_DIR = Path("/home/pi/_RunScanner")
+BASE_DIR = Path("/opt/_RunScanner")
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 import config  # noqa: E402

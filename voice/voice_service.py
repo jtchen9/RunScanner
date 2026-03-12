@@ -42,8 +42,8 @@ from voice_llm import llm_exchange
 HEARTBEAT_SEC = 10
 IDLE_SLEEP_SEC = 0.05
 
-TTS_SCRIPT = "/home/pi/_RunScanner/av/tts_say.sh"
-STT_ECHO_FALLBACK_FILE = "/home/pi/_RunScanner/voice/stt_echo.txt"
+TTS_SCRIPT = "/opt/_RunScanner/av/tts_say.sh"
+STT_ECHO_FALLBACK_FILE = "/opt/_RunScanner/voice/stt_echo.txt"
 
 def _cfg_int(cfg: Dict[str, Any], key: str, default: int) -> int:
     try:
@@ -751,7 +751,7 @@ def main() -> None:
 
             # LLM_BROWSER: Chromium owns mic/speaker; Python must not touch STT here.
             if mode == "llm_browser":
-                wid_file = Path("/home/pi/_RunScanner/voice/llm_browser_wid.txt")
+                wid_file = Path("/opt/_RunScanner/voice/llm_browser_wid.txt")
 
                 # Start browser once per entry
                 if not llm_browser_started:

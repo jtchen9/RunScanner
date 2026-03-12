@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_DIR="/home/pi/_RunScanner"
+BASE_DIR="/opt/_RunScanner"
 AUTOSTART_DIR="/home/pi/.config/autostart"
 AUTOSTART_FILE="${AUTOSTART_DIR}/myscript.desktop"
 AUTOSTART_DISABLED="${AUTOSTART_DIR}/myscript.desktop.disabled"

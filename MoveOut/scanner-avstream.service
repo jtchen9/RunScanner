@@ -6,12 +6,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/pi/_RunScanner
+WorkingDirectory=/opt/_RunScanner
 
 # Ensure log dir exists (safe even if it already exists)
-ExecStartPre=/bin/mkdir -p /home/pi/_RunScanner/av
+ExecStartPre=/bin/mkdir -p /opt/_RunScanner/av
 
-ExecStart=/bin/bash /home/pi/_RunScanner/av/av_stream_runner.sh
+ExecStart=/bin/bash /opt/_RunScanner/av/av_stream_runner.sh
 
 # Graceful stop: send SIGINT first (ffmpeg handles it), then SIGKILL if needed
 KillSignal=SIGINT
@@ -22,8 +22,8 @@ Restart=always
 RestartSec=2
 
 # Logs
-StandardOutput=append:/home/pi/_RunScanner/av/av_stream.log
-StandardError=append:/home/pi/_RunScanner/av/av_stream.log
+StandardOutput=append:/opt/_RunScanner/av/av_stream.log
+StandardError=append:/opt/_RunScanner/av/av_stream.log
 
 [Install]
 WantedBy=multi-user.target

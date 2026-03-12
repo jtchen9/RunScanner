@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # --- single-instance guard ---
-mkdir -p /home/pi/.cache
-exec 9>"/home/pi/.cache/scanner-poller.lock" || exit 1
+mkdir -p /opt/_RunScanner/.cache
+exec 9>"/opt/_RunScanner/.cache/scanner-poller.lock" || exit 1
 flock -n 9 || { echo "Another scanner-poller instance is running; exiting."; exit 0; }
 # -----------------------------
 
@@ -12,7 +12,7 @@ OUT_CSV="/tmp/latest_scan.csv"
 OUT_JSON="/tmp/latest_scan.json"
 MODE="${1:-once}"
 
-PARSER="/home/pi/_RunScanner/parse_iw.py"
+PARSER="/opt/_RunScanner/parse_iw.py"
 IW_BIN="$(command -v iw)"
 
 scan_once() {

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Keep coherent with llm_browser_start.sh (same WID file location)
-WID_FILE="/home/pi/_RunScanner/voice/llm_browser_wid.txt"
+WID_FILE="/opt/_RunScanner/voice/llm_browser_wid.txt"
 
 # GUI env (systemd often lacks these) - keep consistent and avoid hardcoding 1000
 UID_NUM="$(id -u)"

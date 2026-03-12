@@ -3,7 +3,7 @@
 Wave-2 Voice Output Helpers
 
 - beep(): short audible tone (best-effort)
-- say(): call existing /home/pi/_RunScanner/av/tts_say.sh
+- say(): call existing /opt/_RunScanner/av/tts_say.sh
 
 No long-running service here. This is pure utility.
 """
@@ -16,7 +16,7 @@ from typing import Tuple
 
 from voice_common import voice_log
 
-BASE_DIR = Path("/home/pi/_RunScanner")
+BASE_DIR = Path("/opt/_RunScanner")
 TTS_SCRIPT = str(BASE_DIR / "av" / "tts_say.sh")
 
 

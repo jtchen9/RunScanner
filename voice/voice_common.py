@@ -3,7 +3,7 @@
 voice_common.py (Wave-2)
 
 Shared utilities for voice service + agent integration.
-Keeps *all* Wave-2 voice files under /home/pi/_RunScanner/voice
+Keeps *all* Wave-2 voice files under /opt/_RunScanner/voice
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ PREFIX_MIN_RATIO   = 0.70   # looser (twin/scout can be misheard a bit)
 ALLOW_CALLSIGN_ONLY = True
 
 # Paths
-BASE_DIR = Path("/home/pi/_RunScanner")
+BASE_DIR = Path("/opt/_RunScanner")
 VOICE_DIR = BASE_DIR / "voice"
 VOICE_LOG_FILE = VOICE_DIR / "voice_service.log"
 DEFAULT_CALLSIGNS = [

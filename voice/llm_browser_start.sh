@@ -4,8 +4,8 @@ set -euo pipefail
 # -------------------------------------------------------------------
 # Logs (persistent, easy to read)
 # -------------------------------------------------------------------
-LOG="/home/pi/_RunScanner/voice/llm_browser_start.log"
-WID_FILE="/home/pi/_RunScanner/voice/llm_browser_wid.txt"
+LOG="/opt/_RunScanner/voice/llm_browser_start.log"
+WID_FILE="/opt/_RunScanner/voice/llm_browser_wid.txt"
 mkdir -p "$(dirname "$LOG")"
 : >"$LOG"
 
@@ -53,7 +53,7 @@ log "ENV DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS-}"
 # -------------------------------------------------------------------
 CHROME_PROFILE="$(python3 - <<'PY'
 import json
-p="/home/pi/_RunScanner/voice/voice_config.json"
+p="/opt/_RunScanner/voice/voice_config.json"
 try:
     j=json.load(open(p,"r",encoding="utf-8"))
     print((j.get("llm_browser") or {}).get("profile_dir") or "/tmp/voice_llm_browser_profile")
@@ -64,7 +64,7 @@ PY
 
 URL="$(python3 - <<'PY'
 import json
-p="/home/pi/_RunScanner/voice/voice_config.json"
+p="/opt/_RunScanner/voice/voice_config.json"
 try:
     j=json.load(open(p,"r",encoding="utf-8"))
     print((j.get("llm_browser") or {}).get("url") or "https://chatgpt.com/")

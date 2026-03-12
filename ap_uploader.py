@@ -59,6 +59,7 @@ def main() -> None:
                 continue
 
             body = get_ap_traffic_report()
+            body["device_name"] = scanner
 
             ok = post_ap_traffic(
                 nms_base=nms_base,

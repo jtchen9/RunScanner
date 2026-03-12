@@ -2,8 +2,8 @@
 set -euo pipefail
 
 PY="/usr/bin/python3"
-REG="/home/pi/_RunScanner/ap_register.py"
-NAME_FILE="/home/pi/_RunScanner/scanner_name.txt"
+REG="/opt/_RunScanner/ap_register.py"
+NAME_FILE="/opt/_RunScanner/scanner_name.txt"
 
 while true; do
   if $PY "$REG"; then

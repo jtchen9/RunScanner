@@ -19,7 +19,7 @@ import concurrent.futures
 
 SYSTEMCTL = "/usr/bin/systemctl"
 SUDO = "/usr/bin/sudo"
-BASE_DIR = Path("/home/pi/_RunScanner")
+BASE_DIR = Path("/opt/_RunScanner")
 NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
 NMS_TIMEOUT_SEC = 2
 NMS_PORT = 8000

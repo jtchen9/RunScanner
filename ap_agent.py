@@ -76,9 +76,11 @@ def main() -> None:
             time.sleep(OFFLINE_RETRY_SEC)
             continue
 
+        status_obj = get_ap_status()
+        status_obj["device_name"] = scanner      
         status_body = {
             "time": local_ts(),
-            "status": get_ap_status(),
+            "status": status_obj,
         }
 
         ok, payload = post_ap_poll(

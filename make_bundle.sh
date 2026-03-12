@@ -5,7 +5,7 @@ set -euo pipefail
 # Bundle metadata (EDIT HERE WHEN BUMPING VERSION)
 # ------------------------------------------------------------
 BUNDLE_ID="robotBundle1.0"
-BASE_DIR="/home/pi/_RunScanner"
+BASE_DIR="/opt/_RunScanner"
 OUT_DIR="${BASE_DIR}/_bundle_build"
 BUNDLE_DIR="${OUT_DIR}/${BUNDLE_ID}"
 ZIP_NAME="${BUNDLE_ID}.zip"
@@ -70,7 +70,7 @@ set -euo pipefail
 
 echo "[install.sh] Applying robot bundle..."
 
-BASE_DIR="/home/pi/_RunScanner"
+BASE_DIR="/opt/_RunScanner"
 BUNDLE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 REQUIRED_BUNDLE_FILES=(

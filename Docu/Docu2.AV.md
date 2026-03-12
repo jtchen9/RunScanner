@@ -95,14 +95,14 @@ This is the standard “go live now” trigger.
 
 **Pi behavior:**
 Writes args into:
-/home/pi/\_RunScanner/av/av_stream_config.json
+/opt/\_RunScanner/av/av_stream_config.json
 Starts streaming by enabling:
 scanner-avstream.service
 
 **Observable:**
 systemctl status scanner-avstream.service → Active (running)
 Log file grows:
-/home/pi/\_RunScanner/av/av_stream.log
+/opt/\_RunScanner/av/av_stream.log
 MediaMTX shows RTSP publisher at path (e.g. twin-scout-alpha)
 Viewer access:
 RTSP: rtsp://<server>:8554/<path> (VLC)
@@ -155,7 +155,7 @@ Play a local audio file (mp3 / wav) on the Pi speaker or headphone.
 
 ```json
 {
-  "file": "/home/pi/_RunScanner/av/demo.mp3"
+  "file": "/opt/_RunScanner/av/demo.mp3"
 }
 ```
 
@@ -164,7 +164,7 @@ Plays audio using mpv (non-blocking)
 Intended for alerts, demos, notifications
 
 **Observable:**
-/home/pi/\_RunScanner/agent.log shows playback start / PID
+/opt/\_RunScanner/agent.log shows playback start / PID
 Optional PID file:
 /tmp/scanner_audio_play.pid
 
@@ -199,7 +199,7 @@ If still alive and force_kill=true, send SIGKILL.
 Remove the PID file (best-effort) after stopping.
 
 **Observable:**
-/home/pi/\_RunScanner/agent.log shows stop attempt and result, e.g.
+/opt/\_RunScanner/agent.log shows stop attempt and result, e.g.
 RESULT ... detail=audio.stop ok pid=XXXX
 or detail=audio.stop: no pidfile
 PID file:

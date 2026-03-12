@@ -17,11 +17,11 @@ Cover what 4.VoiceWave2Test.py does NOT cover yet:
   (We do not require a new NMS command. We reuse voice.script.set + voice.start.)
 
 Assumptions (same as Wave-2 test):
-- Identity in /home/pi/_RunScanner/scanner_name.txt, e.g. "twin-scout-alpha"
+- Identity in /opt/_RunScanner/scanner_name.txt, e.g. "twin-scout-alpha"
 - NMS endpoint: POST {NMS_BASE}/cmd/_enqueue/{identity}
 - agent.py dispatch supports category "voice" actions:
     voice.start, voice.stop, voice.mode.set, voice.script.set
-- scanner-voice.service exists and runs /home/pi/_RunScanner/voice_service.py
+- scanner-voice.service exists and runs /opt/_RunScanner/voice_service.py
 - voice_llm.py exists and llm_exchange() uses voice_config.json -> cfg["llm"]
 
 NOTE (manual parts):
@@ -41,7 +41,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import requests
 
-BASE_DIR = Path("/home/pi/_RunScanner")
+BASE_DIR = Path("/opt/_RunScanner")
 VOICE_DIR = BASE_DIR / "voice"
 AGENT_LOG = BASE_DIR / "agent.log"
 SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"

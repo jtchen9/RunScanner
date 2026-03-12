@@ -36,7 +36,7 @@ import requests
 # ---------------------------------------------------------------------
 # Single source of truth: config.py (ensure import works no matter cwd)
 # ---------------------------------------------------------------------
-BASE_DIR = Path("/home/pi/_RunScanner")
+BASE_DIR = Path("/opt/_RunScanner")
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 import config  # noqa: E402
@@ -238,7 +238,7 @@ def av_runtime_ready_probe(with_beep: bool = True) -> str:
 
     lines.append("")
     lines.append("Known-good audio test (manual):")
-    lines.append("  mpv --ao=alsa --audio-device=alsa/default --no-video /home/pi/music.mp3")
+    lines.append("  mpv --ao=alsa --audio-device=alsa/default --no-video /opt/_RunScanner\av\demo.mp3")
     lines.append("")
     return "\n".join(lines)
 
@@ -794,7 +794,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     # Audio test constants (test-side only)
-    AUDIO_FILE = "/home/pi/_RunScanner/av/demo.mp3"
+    AUDIO_FILE = "/opt/_RunScanner/av/demo.mp3"
     AUDIO_PID_FILE = "/tmp/scanner_audio_play.pid"
     
     raise SystemExit(main())

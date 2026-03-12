@@ -3,7 +3,7 @@
 voice_agent_api.py (Wave-2)
 
 Pi-side executors for NMS voice commands.
-Keep all voice code under /home/pi/_RunScanner/voice.
+Keep all voice code under /opt/_RunScanner/voice.
 """
 
 from __future__ import annotations

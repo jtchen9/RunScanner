@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CFG="/home/pi/_RunScanner/av/av_stream_config.json"
-LOG="/home/pi/_RunScanner/av/av_stream.log"
+CFG="/opt/_RunScanner/av/av_stream_config.json"
+LOG="/opt/_RunScanner/av/av_stream.log"
 
 # Wait for config to exist (agent writes it before starting service)
 if [[ ! -f "$CFG" ]]; then
@@ -14,7 +14,7 @@ fi
 read_json() {
   /usr/bin/python3 - << 'PY'
 import json
-p="/home/pi/_RunScanner/av/av_stream_config.json"
+p="/opt/_RunScanner/av/av_stream_config.json"
 j=json.load(open(p,"r",encoding="utf-8"))
 # print fields line-by-line in a stable order
 keys=["server","port","path","transport","video_dev","audio_dev","size","fps"]

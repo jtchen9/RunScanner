@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 # --- Paths owned here ---
-BASE_DIR = Path("/home/pi/_RunScanner")
+BASE_DIR = Path("/opt/_RunScanner")
 VOICE_DIR = BASE_DIR / "voice"
 VOICE_CFG_FILE = VOICE_DIR / "voice_config.json"
 

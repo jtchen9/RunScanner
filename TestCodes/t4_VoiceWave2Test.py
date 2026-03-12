@@ -11,12 +11,12 @@ Covers (in one go):
 - Cleanup (stop agent + stop voice service)
 
 Assumptions:
-- Identity is stored in /home/pi/_RunScanner/scanner_name.txt, e.g. "twin-scout-alpha"
+- Identity is stored in /opt/_RunScanner/scanner_name.txt, e.g. "twin-scout-alpha"
 - NMS endpoint: POST {NMS_BASE}/cmd/_enqueue/{identity}
 - NMS requires execute_at in body (TIME_FMT "%Y-%m-%d-%H:%M:%S")
 - agent.py dispatch supports category "voice" and actions:
     voice.start, voice.stop, voice.mode.set, voice.script.set
-- scanner-voice.service exists and runs /home/pi/_RunScanner/voice/voice_service.py
+- scanner-voice.service exists and runs /opt/_RunScanner/voice/voice_service.py
 """
 
 import os
@@ -29,7 +29,7 @@ from datetime import datetime, timedelta
 
 import requests
 
-BASE_DIR = Path("/home/pi/_RunScanner")
+BASE_DIR = Path("/opt/_RunScanner")
 VOICE_DIR = BASE_DIR / "voice"
 AGENT_LOG = BASE_DIR / "agent.log"
 SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"

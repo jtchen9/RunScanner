@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Step-1 smoke test:
-- reads identity from /home/pi/_RunScanner/scanner_name.txt
-- writes to /home/pi/_RunScanner/voice/voice.log
+- reads identity from /opt/_RunScanner/scanner_name.txt
+- writes to /opt/_RunScanner/voice/voice.log
 - loads voice_config.json (or defaults)
 """
 

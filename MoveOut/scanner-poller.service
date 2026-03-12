@@ -9,8 +9,8 @@ Type=simple
 User=pi
 Group=pi
 Environment=IFACE=wlan0
-ExecStart=/home/pi/_RunScanner/scan_wifi.sh loop
-WorkingDirectory=/home/pi/_RunScanner
+ExecStart=/opt/_RunScanner/scan_wifi.sh loop
+WorkingDirectory=/opt/_RunScanner
 Restart=always
 RestartSec=5
 # Journald gets stdout/stderr by default

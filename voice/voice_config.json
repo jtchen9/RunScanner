@@ -21,7 +21,7 @@
     }
     ],
     "stt_engine": "vosk",
-    "vosk_model_dir": "/home/pi/_RunScanner/voice/models/vosk-model-small-en-us-0.15",
+    "vosk_model_dir": "/opt/_RunScanner/voice/models/vosk-model-small-en-us-0.15",
     "mic_dev": "plughw:1,0",
     "sample_rate": 16000,
     "channels": 1,
@@ -34,7 +34,7 @@
     "test_wake_always": false,
     "test_phrase_always": false,
     "stt_echo_enabled": false,
-    "stt_echo_file": "/home/pi/_RunScanner/voice/stt_echo.txt",
+    "stt_echo_file": "/opt/_RunScanner/voice/stt_echo.txt",
     "chunk_sec_name_listen": 3,
     "chunk_sec_conversation": 1,
 
@@ -47,7 +47,7 @@
     "provider": "openai",
     "base_url": "https://api.openai.com/v1/responses",
     "model": "gpt-4.1-mini",
-    "api_key_file": "/home/pi/.keys/openai.key",
+    "api_key_file": "",
     "timeout_sec": 30,
     "temperature": 0.4,
     "max_output_tokens": 250,
@@ -60,9 +60,9 @@
     "utterance_joiner": " ",
     "utterance_speech_min_chars": 1,
     "llm_browser": {
-        "start_script": "/home/pi/_RunScanner/voice/llm_browser_start.sh",
-        "stop_script": "/home/pi/_RunScanner/voice/llm_browser_stop.sh",
-        "profile_dir": "/home/pi/_RunScanner/_state/voice_llm_browser_profile",
+        "start_script": "/opt/_RunScanner/voice/llm_browser_start.sh",
+        "stop_script": "/opt/_RunScanner/voice/llm_browser_stop.sh",
+        "profile_dir": "/opt/_RunScanner/_state/voice_llm_browser_profile",
         "url": "https://chatgpt.com/c/69885692-4730-83a6-b8f8-64cbe3e9870e"
     }    
 }

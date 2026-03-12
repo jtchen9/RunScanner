@@ -16,7 +16,7 @@ def main():
 
     # Minimal cfg: adjust to your known-good mic setup if needed
     cfg = {
-        "vosk_model_dir": "/home/pi/_RunScanner/voice/models/vosk-model-small-en-us-0.15",
+        "vosk_model_dir": "/opt/_RunScanner/voice/models/vosk-model-small-en-us-0.15",
         "mic_dev": "plughw:1,0",
         "sample_rate": 16000,
         "channels": 1,

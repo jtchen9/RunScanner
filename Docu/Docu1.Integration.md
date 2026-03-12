@@ -22,13 +22,13 @@ Pi registers to NMS using its MAC address and obtains an assigned scanner name.
 Boot or login (invoked before GUI and before agent polling).
 
 **Pi implementation:**  
-`/home/pi/_RunScanner/register.py`
+`/opt/_RunScanner/register.py`
 
 **Outputs:**
 
-- `/home/pi/_RunScanner/scanner_name.txt` — assigned scanner name (e.g. `twin-scout-alpha`)
-- `/home/pi/_RunScanner/last_register.json` — telemetry/debug record
-- `/home/pi/_RunScanner/nms_base.txt` — selected NMS base URL
+- `/opt/_RunScanner/scanner_name.txt` — assigned scanner name (e.g. `twin-scout-alpha`)
+- `/opt/_RunScanner/last_register.json` — telemetry/debug record
+- `/opt/_RunScanner/nms_base.txt` — selected NMS base URL
 
 **NMS API (Pi-facing):**
 
@@ -74,7 +74,7 @@ systemd service `scanner-agent.service`
 
 **Observable:**
 
-- `/home/pi/_RunScanner/agent.log`
+- `/opt/_RunScanner/agent.log`
 - Regular poll / execute / ACK activity
 
 **NMS APIs used:**
@@ -97,7 +97,7 @@ systemd service `scanner-uploader.service`
 
 **Observable:**
 
-- `/home/pi/_RunScanner/uploader.log`
+- `/opt/_RunScanner/uploader.log`
 - `/ingest/{scanner}` queue grows on NMS
 
 ---

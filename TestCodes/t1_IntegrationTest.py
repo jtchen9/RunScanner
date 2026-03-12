@@ -275,14 +275,14 @@ def build_bundle_zip_from_dir(src_dir: str, bundle_id: str) -> str:
     Create a zip file:
       ZIP contains a top-level folder named {bundle_id}/...
 
-    The zip is stored in /home/pi/_RunScanner/bundles
+    The zip is stored in /opt/_RunScanner/bundles
     so it can be reused later.
     """
     src = Path(src_dir)
     if not src.exists() or not src.is_dir():
         die(f"BUNDLE_SRC_DIR not a directory: {src}")
 
-    bundle_store = Path("/home/pi/_RunScanner/bundles")
+    bundle_store = Path("/opt/_RunScanner/bundles")
     bundle_store.mkdir(parents=True, exist_ok=True)
 
     out_zip = bundle_store / f"{bundle_id}.zip"
@@ -428,7 +428,7 @@ if __name__ == "__main__":
     # -------------------------------------------------------------------------
     NMS_BASE = "http://192.168.137.1:8000"
 
-    TEST_DIR = Path("/home/pi/_RunScanner/TestCodes")
+    TEST_DIR = Path("/opt/_RunScanner/TestCodes")
     ENTER_SH = TEST_DIR / "enter_test_mode.sh"
     EXIT_SH  = TEST_DIR / "exit_test_mode.sh"
 
@@ -448,7 +448,7 @@ if __name__ == "__main__":
 
     # If you want the script to build zip automatically, set BUNDLE_SRC_DIR to a folder.
     # Or set BUNDLE_ZIP_PATH to an existing zip. Leaving both empty means: skip upload, still test download/report.
-    BUNDLE_SRC_DIR = "/home/pi/_RunScanner"      
+    BUNDLE_SRC_DIR = "/opt/_RunScanner"      
     BUNDLE_ZIP_PATH = ""     
 
     DO_COMMAND_TEST = True
