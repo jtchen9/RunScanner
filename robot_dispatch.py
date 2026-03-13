@@ -17,7 +17,7 @@ from robot_agent_handlers import (
     exec_voice_script_set_local,
     report_installed_bundle,
 )
-from bundle_manager import apply_bundle
+from bundle_manager2 import apply_bundle
 from voice.voice_agent_api import exec_voice_llm_config_set
 
 

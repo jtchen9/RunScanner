@@ -3,13 +3,19 @@
 Bundle manager (Pi-side, production).
 
 Responsibilities:
-- Stop running services (highest priority)
+- Stop running robot services
 - Download bundle ZIP from provided URL
 - Extract into bundles/{bundle_id}
-- Switch active symlink
 - Write active_bundle.txt (sole source of truth)
-- Run install hook (optional)
-- Restart uploader service
+- Run install hook (install.sh)
+
+install.sh is responsible for:
+- copying files into /opt/_RunScanner
+- installing/updating systemd unit files
+- installing/updating sudoers file
+- installing/updating GUI autostart file
+- daemon-reload
+- enable/restart policy
 
 No rollback. No version arbitration. Pi is dumb by design.
 """
@@ -18,13 +24,16 @@ import subprocess
 import zipfile
 from pathlib import Path
 from typing import Tuple
-from config import BASE_DIR, SYSTEMCTL, SUDO, SERVICE_SCANNER_POLLER, SERVICE_UPLOADER
 
 import requests
 
-BUNDLES_DIR = BASE_DIR / "bundles"
-ACTIVE_LINK = BUNDLES_DIR / "active"
-ACTIVE_BUNDLE_FILE = BUNDLES_DIR / "active_bundle.txt"
+from config import (
+    BUNDLES_DIR,
+    ACTIVE_BUNDLE_FILE,
+    SYSTEMCTL,
+    SUDO,
+)
+
 HTTP_TIMEOUT = 30
 
 
@@ -41,17 +50,23 @@ def _run(cmd, timeout=30) -> Tuple[bool, str]:
     except subprocess.CalledProcessError as e:
         return False, (e.stderr or e.stdout or "").strip()
 
+
 def _systemctl(action: str, service: str) -> None:
-    # best-effort; try normal then sudo -n
     _run([SYSTEMCTL, action, service])
     _run([SUDO, "-n", SYSTEMCTL, action, service])
 
-def stop_all_services() -> None:
-    _systemctl("stop", SERVICE_SCANNER_POLLER)
-    _systemctl("stop", SERVICE_UPLOADER)
 
-def restart_uploader() -> None:
-    _systemctl("restart", SERVICE_UPLOADER)
+def stop_robot_services() -> None:
+    services = [
+        "scanner-agent.service",
+        "scanner-uploader.service",
+        "scanner-poller.service",
+        "scanner-voice.service",
+        "scanner-avstream.service",
+    ]
+    for svc in services:
+        _systemctl("stop", svc)
+
 
 def _download_bundle(url: str, dst_zip: Path) -> None:
     r = requests.get(url, stream=True, timeout=HTTP_TIMEOUT)
@@ -61,19 +76,22 @@ def _download_bundle(url: str, dst_zip: Path) -> None:
             if chunk:
                 f.write(chunk)
 
+
 def _extract_zip(src_zip: Path, dst_dir: Path) -> None:
     with zipfile.ZipFile(src_zip, "r") as zf:
         zf.extractall(dst_dir)
 
+
 def _run_install_hook(bundle_dir: Path) -> None:
     hook = bundle_dir / "install.sh"
     if not hook.exists():
-        return
+        raise RuntimeError("install.sh missing in bundle")
 
     hook.chmod(0o755)
-    ok, out = _run(["/usr/bin/bash", str(hook)], timeout=180)
+    ok, out = _run(["/usr/bin/bash", str(hook)], timeout=300)
     if not ok:
         raise RuntimeError(f"install.sh failed: {out}")
+
 
 def apply_bundle(bundle_id: str, url: str) -> Tuple[bool, str]:
     """
@@ -86,7 +104,7 @@ def apply_bundle(bundle_id: str, url: str) -> Tuple[bool, str]:
         BUNDLES_DIR.mkdir(parents=True, exist_ok=True)
 
         # 1) HARD STOP
-        stop_all_services()
+        stop_robot_services()
 
         # 2) Download
         tmp_zip = Path("/tmp") / f"{bundle_id}.zip"
@@ -95,28 +113,28 @@ def apply_bundle(bundle_id: str, url: str) -> Tuple[bool, str]:
 
         _download_bundle(url, tmp_zip)
 
-        # 3) Extract
+        # 3) Extract into bundles/{bundle_id}
         bundle_dir = BUNDLES_DIR / bundle_id
         if bundle_dir.exists():
-            # overwrite semantics: remove old bundle completely
             subprocess.run(["rm", "-rf", str(bundle_dir)], check=False)
 
         _extract_zip(tmp_zip, bundle_dir)
 
-        # 4) Activate
-        if ACTIVE_LINK.exists() or ACTIVE_LINK.is_symlink():
-            ACTIVE_LINK.unlink()
-        ACTIVE_LINK.symlink_to(bundle_dir)
+        # Support nested layout if zip contains top folder twice
+        if not (bundle_dir / "install.sh").exists():
+            nested = bundle_dir / bundle_id
+            if nested.exists() and (nested / "install.sh").exists():
+                bundle_dir = nested
 
+        # 4) Record active bundle id
+        ACTIVE_BUNDLE_FILE.parent.mkdir(parents=True, exist_ok=True)
         ACTIVE_BUNDLE_FILE.write_text(bundle_id + "\n", encoding="utf-8")
 
-        # 5) Install hook
+        # 5) Real deployment
         _run_install_hook(bundle_dir)
-
-        # 6) Restart uploader only
-        restart_uploader()
 
         return True, f"bundle applied: {bundle_id}"
 
     except Exception as e:
         return False, f"bundle apply failed: {type(e).__name__}: {e}"
+    
