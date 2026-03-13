@@ -13,11 +13,13 @@ Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1
 Environment=DISPLAY=:0
-Environment=XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth.4UOIK3
+# Environment=XDG_RUNTIME_DIR=/run/user/1000
+# Environment=XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth.4UOIK3
 
 # Keep logs in our own file; systemd journal still has them too
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
+# WantedBy=multi-user.target
