@@ -17,7 +17,7 @@ from robot_agent_handlers import (
     exec_voice_script_set_local,
     report_installed_bundle,
 )
-from bundle_manager2 import apply_bundle
+from bundle_manager import apply_bundle
 from voice.voice_agent_api import exec_voice_llm_config_set
 
 
@@ -55,8 +55,11 @@ def dispatch(
         bundle_id = (args.get("bundle_id") or "").strip() or (cmd_fields.get("bundle_id") or "").strip()
         url = (args.get("url") or "").strip() or (cmd_fields.get("url") or "").strip()
 
-        if not bundle_id or not url:
-            return "error", "bundle.apply missing bundle_id or url"
+        if not bundle_id:
+            return "error", "bundle.apply missing bundle_id"
+
+        if not url:
+            url = f"{nms_base}/bootstrap/bundle/{bundle_id}"
 
         ok, detail = apply_bundle(bundle_id, url)
         status = "ok" if ok else "error"

@@ -28,6 +28,7 @@ from typing import Tuple
 import requests
 
 from config import (
+    BASE_DIR,
     BUNDLES_DIR,
     ACTIVE_BUNDLE_FILE,
     SYSTEMCTL,
@@ -35,7 +36,16 @@ from config import (
 )
 
 HTTP_TIMEOUT = 30
+BUNDLE_LOG_PATH = BASE_DIR / "bundle_apply.log"
 
+def _blog(msg: str) -> None:
+    line = f"[bundle] {msg}"
+    print(line, flush=True)
+    try:
+        with BUNDLE_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
 
 def _run(cmd, timeout=30) -> Tuple[bool, str]:
     try:
@@ -58,7 +68,6 @@ def _systemctl(action: str, service: str) -> None:
 
 def stop_robot_services() -> None:
     services = [
-        "scanner-agent.service",
         "scanner-uploader.service",
         "scanner-poller.service",
         "scanner-voice.service",
@@ -88,9 +97,22 @@ def _run_install_hook(bundle_dir: Path) -> None:
         raise RuntimeError("install.sh missing in bundle")
 
     hook.chmod(0o755)
-    ok, out = _run(["/usr/bin/bash", str(hook)], timeout=300)
-    if not ok:
-        raise RuntimeError(f"install.sh failed: {out}")
+    _blog(f"run install hook: {hook}")
+
+    try:
+        with BUNDLE_LOG_PATH.open("a", encoding="utf-8") as logf:
+            logf.write(f"[bundle] install.sh stdout/stderr begin\n")
+            cp = subprocess.run(
+                ["/usr/bin/bash", str(hook)],
+                check=True,
+                stdout=logf,
+                stderr=logf,
+                text=True,
+                timeout=300,
+            )
+            logf.write(f"[bundle] install.sh stdout/stderr end rc={cp.returncode}\n")
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"install.sh failed rc={e.returncode}")
 
 
 def apply_bundle(bundle_id: str, url: str) -> Tuple[bool, str]:
@@ -102,39 +124,54 @@ def apply_bundle(bundle_id: str, url: str) -> Tuple[bool, str]:
     """
     try:
         BUNDLES_DIR.mkdir(parents=True, exist_ok=True)
+        _blog(f"START bundle_id={bundle_id} url={url}")
 
-        # 1) HARD STOP
-        stop_robot_services()
-
-        # 2) Download
+        # 1) Download first (safe phase)
         tmp_zip = Path("/tmp") / f"{bundle_id}.zip"
         if tmp_zip.exists():
+            _blog(f"remove old tmp zip: {tmp_zip}")
             tmp_zip.unlink()
 
+        _blog(f"download begin -> {tmp_zip}")
         _download_bundle(url, tmp_zip)
+        _blog(f"download ok size={tmp_zip.stat().st_size} path={tmp_zip}")
+
+        # 2) Only after successful download, enter disruptive phase
+        _blog("stop_robot_services begin")
+        stop_robot_services()
+        _blog("stop_robot_services done")
 
         # 3) Extract into bundles/{bundle_id}
         bundle_dir = BUNDLES_DIR / bundle_id
         if bundle_dir.exists():
+            _blog(f"remove old bundle dir: {bundle_dir}")
             subprocess.run(["rm", "-rf", str(bundle_dir)], check=False)
 
+        _blog(f"extract begin -> {bundle_dir}")
         _extract_zip(tmp_zip, bundle_dir)
+        _blog(f"extract done -> {bundle_dir}")
 
         # Support nested layout if zip contains top folder twice
         if not (bundle_dir / "install.sh").exists():
             nested = bundle_dir / bundle_id
             if nested.exists() and (nested / "install.sh").exists():
+                _blog(f"nested bundle layout detected -> {nested}")
                 bundle_dir = nested
+
+        _blog(f"effective bundle_dir={bundle_dir}")
 
         # 4) Record active bundle id
         ACTIVE_BUNDLE_FILE.parent.mkdir(parents=True, exist_ok=True)
         ACTIVE_BUNDLE_FILE.write_text(bundle_id + "\n", encoding="utf-8")
+        _blog(f"active bundle written -> {ACTIVE_BUNDLE_FILE}")
 
         # 5) Real deployment
+        _blog("install hook begin")
         _run_install_hook(bundle_dir)
+        _blog("install hook returned normally")
 
         return True, f"bundle applied: {bundle_id}"
 
     except Exception as e:
+        _blog(f"ERROR {type(e).__name__}: {e}")
         return False, f"bundle apply failed: {type(e).__name__}: {e}"
-    

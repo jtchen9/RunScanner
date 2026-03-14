@@ -117,25 +117,53 @@ def main() -> None:
 
             log(f"EXEC cmd_id={cmd_id} action={action} execute_at={execute_at} xid={xid}")
 
-            status, detail = dispatch(
-                nms_base=nms_base,
-                scanner=scanner,
-                cmd_fields=fields,
-                http_timeout_sec=HTTP_TIMEOUT_SEC,
-                log_func=log,
-            )
-            log(f"RESULT cmd_id={cmd_id} status={status} detail={detail}")
+            if action == "bundle.apply":
+                # Disruptive command: ACK first so NMS will not keep re-issuing it.
+                pre_status = "ok"
+                pre_detail = "bundle.apply accepted; robot will install bundle and reboot"
 
-            ack_command(
-                nms_base=nms_base,
-                scanner=scanner,
-                cmd_id=cmd_id,
-                status=status,
-                detail=detail,
-                http_timeout_sec=HTTP_TIMEOUT_SEC,
-                ts_func=local_ts,
-                log_func=log,
-            )
+                ack_command(
+                    nms_base=nms_base,
+                    scanner=scanner,
+                    cmd_id=cmd_id,
+                    status=pre_status,
+                    detail=pre_detail,
+                    http_timeout_sec=HTTP_TIMEOUT_SEC,
+                    ts_func=local_ts,
+                    log_func=log,
+                )
+                log(f"PRE-ACK cmd_id={cmd_id} status={pre_status} detail={pre_detail}")
+                log(f"BUNDLE: begin apply after pre-ack cmd_id={cmd_id}")
+                
+                status, detail = dispatch(
+                    nms_base=nms_base,
+                    scanner=scanner,
+                    cmd_fields=fields,
+                    http_timeout_sec=HTTP_TIMEOUT_SEC,
+                    log_func=log,
+                )
+                log(f"RESULT cmd_id={cmd_id} status={status} detail={detail}")
+
+            else:
+                status, detail = dispatch(
+                    nms_base=nms_base,
+                    scanner=scanner,
+                    cmd_fields=fields,
+                    http_timeout_sec=HTTP_TIMEOUT_SEC,
+                    log_func=log,
+                )
+                log(f"RESULT cmd_id={cmd_id} status={status} detail={detail}")
+
+                ack_command(
+                    nms_base=nms_base,
+                    scanner=scanner,
+                    cmd_id=cmd_id,
+                    status=status,
+                    detail=detail,
+                    http_timeout_sec=HTTP_TIMEOUT_SEC,
+                    ts_func=local_ts,
+                    log_func=log,
+                )
 
         time.sleep(POLL_INTERVAL_SEC)
 

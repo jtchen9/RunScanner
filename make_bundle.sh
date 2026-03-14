@@ -17,49 +17,54 @@ echo "=== Building bundle: ${BUNDLE_ID} ==="
 # ------------------------------------------------------------
 cd "${BASE_DIR}"
 
-REQUIRED_FILES=(
-  # common
+# One single source of truth for top-level files
+TOP_LEVEL_FILES=(
+  agent.py
+  bundle_manager.py
   common_log.py
   common_nms.py
   common_register.py
   config.py
-  bundle_manager.py
-
-  # robot runtime
-  agent.py
-  robot_agent.py
-  robot_dispatch.py
-  robot_agent_handlers.py
-  robot_handlers_scan.py
-  robot_handlers_av.py
-  robot_handlers_audio.py
-  robot_handlers_voice.py
-  uploader.py
-  robot_uploader.py
+  main.py
+  make_bundle.sh
+  parse_iw.py
   register.py
   register_until_ok.sh
-
-  # scan path
-  scan_wifi.sh
-  parse_iw.py
+  robot_agent.py
+  robot_agent_handlers.py
+  robot_dispatch.py
+  robot_handlers_audio.py
+  robot_handlers_av.py
+  robot_handlers_scan.py
+  robot_handlers_voice.py
+  robot_uploader.py
   scan_payload.py
-
-  # GUI/runtime
-  main.py
+  scan_wifi.sh
+  uploader.py
   windows.py
-
-  # docs / notes
-  scenario_commands.md
 )
 
 REQUIRED_DIRS=(
-  av
-  voice
-  services
   autostart
+  av
+  services
+  voice
 )
 
-for f in "${REQUIRED_FILES[@]}"; do
+REQUIRED_SERVICE_FILES=(
+  services/scanner-agent
+  services/scanner-agent.service
+  services/scanner-avstream.service
+  services/scanner-poller.service
+  services/scanner-uploader.service
+  services/scanner-voice.service
+)
+
+REQUIRED_AUTOSTART_FILES=(
+  autostart/myscript.desktop
+)
+
+for f in "${TOP_LEVEL_FILES[@]}"; do
   if [[ ! -f "${f}" ]]; then
     echo "ERROR: required file missing: ${f}"
     exit 1
@@ -73,25 +78,12 @@ for d in "${REQUIRED_DIRS[@]}"; do
   fi
 done
 
-REQUIRED_SERVICE_FILES=(
-  services/scanner-agent.service
-  services/scanner-uploader.service
-  services/scanner-poller.service
-  services/scanner-voice.service
-  services/scanner-avstream.service
-  services/scanner-agent
-)
-
 for f in "${REQUIRED_SERVICE_FILES[@]}"; do
   if [[ ! -f "${f}" ]]; then
     echo "ERROR: required service-related file missing: ${f}"
     exit 1
   fi
 done
-
-REQUIRED_AUTOSTART_FILES=(
-  autostart/myscript.desktop
-)
 
 for f in "${REQUIRED_AUTOSTART_FILES[@]}"; do
   if [[ ! -f "${f}" ]]; then
@@ -111,25 +103,24 @@ mkdir -p "${BUNDLE_DIR}"
 # ------------------------------------------------------------
 echo "Copying files..."
 
-for f in "${REQUIRED_FILES[@]}"; do
+for f in "${TOP_LEVEL_FILES[@]}"; do
   cp "${f}" "${BUNDLE_DIR}/"
 done
 
-cp -a av "${BUNDLE_DIR}/"
-cp -a voice "${BUNDLE_DIR}/"
-cp -a services "${BUNDLE_DIR}/"
-cp -a autostart "${BUNDLE_DIR}/"
+for d in "${REQUIRED_DIRS[@]}"; do
+  cp -a "${d}" "${BUNDLE_DIR}/"
+done
 
 # Optional extras if present
 OPTIONAL_FILES=(
-  common_ap_nms.py
-  ap_register.py
-  ap_register_until_ok.sh
   ap_agent.py
-  ap_uploader.py
   ap_dispatch.py
   ap_handlers_status.py
   ap_handlers_traffic.py
+  ap_register.py
+  ap_register_until_ok.sh
+  ap_uploader.py
+  common_ap_nms.py
 )
 
 for f in "${OPTIONAL_FILES[@]}"; do
@@ -139,184 +130,171 @@ for f in "${OPTIONAL_FILES[@]}"; do
 done
 
 # ------------------------------------------------------------
-# Install hook
+# Build install.sh from the same source lists
 # ------------------------------------------------------------
-cat > "${BUNDLE_DIR}/install.sh" << 'EOF'
+TOP_LEVEL_FILES_STR=""
+for f in "${TOP_LEVEL_FILES[@]}"; do
+  TOP_LEVEL_FILES_STR+="  ${f}"$'\n'
+done
+
+REQUIRED_DIRS_STR=""
+for d in "${REQUIRED_DIRS[@]}"; do
+  REQUIRED_DIRS_STR+="  ${d}"$'\n'
+done
+
+cat > "${BUNDLE_DIR}/install.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+
+# ------------------------------------------------------------
+# Bundle install tracing
+# ------------------------------------------------------------
+LOG_FILE="/opt/_RunScanner/bundle_apply.log"
+
+log_step() {
+  echo "[install.sh] \$(date '+%F %T') \$*" >> "\${LOG_FILE}"
+}
+
+log_step "START bundle install"
 
 echo "[install.sh] Applying robot bundle..."
 
 BASE_DIR="/opt/_RunScanner"
-BUNDLE_DIR="$(cd "$(dirname "$0")" && pwd)"
+BUNDLE_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
 AUTOSTART_DIR="/home/pi/.config/autostart"
 SYSTEMD_DIR="/etc/systemd/system"
 SUDOERS_DST="/etc/sudoers.d/scanner-agent"
 
-REQUIRED_BUNDLE_ITEMS=(
-  common_log.py
-  common_nms.py
-  common_register.py
-  config.py
-  bundle_manager.py
+TOP_LEVEL_FILES=(
+${TOP_LEVEL_FILES_STR})
 
-  agent.py
-  robot_agent.py
-  robot_dispatch.py
-  robot_agent_handlers.py
-  robot_handlers_scan.py
-  robot_handlers_av.py
-  robot_handlers_audio.py
-  robot_handlers_voice.py
-  uploader.py
-  robot_uploader.py
-  register.py
-  register_until_ok.sh
+REQUIRED_DIRS=(
+${REQUIRED_DIRS_STR})
 
-  scan_wifi.sh
-  parse_iw.py
-  scan_payload.py
+log_step "Verifying bundle contents"
 
-  main.py
-  windows.py
-  scenario_commands.md
-
-  av
-  voice
-  services
-  autostart
-)
-
-echo "[install.sh] Verifying bundle contents..."
-for f in "${REQUIRED_BUNDLE_ITEMS[@]}"; do
-  if [[ ! -e "${BUNDLE_DIR}/${f}" ]]; then
-    echo "[install.sh] ERROR: missing bundle item: ${f}"
+for f in "\${TOP_LEVEL_FILES[@]}"; do
+  if [[ ! -f "\${BUNDLE_DIR}/\${f}" ]]; then
+    log_step "ERROR missing file: \${f}"
     exit 1
   fi
 done
 
-echo "[install.sh] Stopping robot services..."
+for d in "\${REQUIRED_DIRS[@]}"; do
+  if [[ ! -d "\${BUNDLE_DIR}/\${d}" ]]; then
+    log_step "ERROR missing directory: \${d}"
+    exit 1
+  fi
+done
+
+log_step "Stopping robot services"
+
 for svc in \
-  scanner-agent.service \
   scanner-uploader.service \
   scanner-poller.service \
   scanner-voice.service \
   scanner-avstream.service
 do
-  systemctl stop "${svc}" 2>/dev/null || true
-  sudo -n systemctl stop "${svc}" 2>/dev/null || true
+  log_step "Stopping \$svc"
+  systemctl stop "\${svc}" >> "\${LOG_FILE}" 2>&1 || true
+  sudo -n systemctl stop "\${svc}" >> "\${LOG_FILE}" 2>&1 || true
 done
 
 KEEP_RUNTIME_ITEMS=(
-  bundles
-  MoveOut
-  TestCodes
   _bundle_build
-  scanner_name.txt
-  last_register.json
-  nms_base.txt
   ap_traffic_config.json
+  bundles
+  last_register.json
+  MoveOut
+  nms_base.txt
+  scanner_name.txt
+  TestCodes
 )
 
-echo "[install.sh] Cleaning runtime directory..."
-mkdir -p "${BASE_DIR}"
-cd "${BASE_DIR}"
+log_step "Cleaning runtime directory"
+
+mkdir -p "\${BASE_DIR}"
+cd "\${BASE_DIR}"
 
 for item in * .*; do
-  [[ "${item}" == "." || "${item}" == ".." ]] && continue
+  [[ "\${item}" == "." || "\${item}" == ".." ]] && continue
 
   keep=false
-  for k in "${KEEP_RUNTIME_ITEMS[@]}"; do
-    if [[ "${item}" == "${k}" ]]; then
+  for k in "\${KEEP_RUNTIME_ITEMS[@]}"; do
+    if [[ "\${item}" == "\${k}" ]]; then
       keep=true
       break
     fi
   done
 
-  if [[ "${keep}" == false ]]; then
-    rm -rf "${item}"
+  if [[ "\${keep}" == false ]]; then
+    log_step "Removing \${item}"
+    rm -rf "\${item}"
   fi
 done
 
-echo "[install.sh] Copying payload into ${BASE_DIR}..."
+log_step "Copying payload"
 
-for f in \
-  common_log.py \
-  common_nms.py \
-  common_register.py \
-  config.py \
-  bundle_manager.py \
-  agent.py \
-  robot_agent.py \
-  robot_dispatch.py \
-  robot_agent_handlers.py \
-  robot_handlers_scan.py \
-  robot_handlers_av.py \
-  robot_handlers_audio.py \
-  robot_handlers_voice.py \
-  uploader.py \
-  robot_uploader.py \
-  register.py \
-  register_until_ok.sh \
-  scan_wifi.sh \
-  parse_iw.py \
-  scan_payload.py \
-  main.py \
-  windows.py \
-  scenario_commands.md
-do
-  cp -a "${BUNDLE_DIR}/${f}" "${BASE_DIR}/"
+for f in "\${TOP_LEVEL_FILES[@]}"; do
+  cp -a "\${BUNDLE_DIR}/\${f}" "\${BASE_DIR}/"
 done
 
-cp -a "${BUNDLE_DIR}/av" "${BASE_DIR}/"
-cp -a "${BUNDLE_DIR}/voice" "${BASE_DIR}/"
+for d in "\${REQUIRED_DIRS[@]}"; do
+  cp -a "\${BUNDLE_DIR}/\${d}" "\${BASE_DIR}/"
+done
 
-# Optional AP files if present
+log_step "Copying optional AP files"
+
 for f in \
-  common_ap_nms.py \
-  ap_register.py \
-  ap_register_until_ok.sh \
   ap_agent.py \
-  ap_uploader.py \
   ap_dispatch.py \
   ap_handlers_status.py \
-  ap_handlers_traffic.py
+  ap_handlers_traffic.py \
+  ap_register.py \
+  ap_register_until_ok.sh \
+  ap_uploader.py \
+  common_ap_nms.py
 do
-  if [[ -f "${BUNDLE_DIR}/${f}" ]]; then
-    cp -a "${BUNDLE_DIR}/${f}" "${BASE_DIR}/"
+  if [[ -f "\${BUNDLE_DIR}/\${f}" ]]; then
+    cp -a "\${BUNDLE_DIR}/\${f}" "\${BASE_DIR}/"
   fi
 done
 
-echo "[install.sh] Fixing permissions..."
-find "${BASE_DIR}" -type f -name "*.sh" -exec chmod +x {} \; || true
-find "${BASE_DIR}" -type f -name "*.py" -exec chmod +x {} \; || true
-chmod -R u+rwX "${BASE_DIR}/voice" || true
-chmod -R u+rwX "${BASE_DIR}/av" || true
+log_step "Fixing permissions"
 
-echo "[install.sh] Installing systemd service files..."
-mkdir -p "${SYSTEMD_DIR}"
+find "\${BASE_DIR}" -type f -name "*.sh" -exec chmod +x {} \; >> "\${LOG_FILE}" 2>&1 || true
+find "\${BASE_DIR}" -type f -name "*.py" -exec chmod +x {} \; >> "\${LOG_FILE}" 2>&1 || true
+chmod -R u+rwX "\${BASE_DIR}/voice" >> "\${LOG_FILE}" 2>&1 || true
+chmod -R u+rwX "\${BASE_DIR}/av" >> "\${LOG_FILE}" 2>&1 || true
 
-cp -a "${BUNDLE_DIR}/services/scanner-agent.service"    "${SYSTEMD_DIR}/"
-cp -a "${BUNDLE_DIR}/services/scanner-uploader.service" "${SYSTEMD_DIR}/"
-cp -a "${BUNDLE_DIR}/services/scanner-poller.service"   "${SYSTEMD_DIR}/"
-cp -a "${BUNDLE_DIR}/services/scanner-voice.service"    "${SYSTEMD_DIR}/"
-cp -a "${BUNDLE_DIR}/services/scanner-avstream.service" "${SYSTEMD_DIR}/"
+log_step "Installing systemd service files"
 
-echo "[install.sh] Installing sudoers rule..."
-cp -a "${BUNDLE_DIR}/services/scanner-agent" "${SUDOERS_DST}"
-chown root:root "${SUDOERS_DST}"
-chmod 0440 "${SUDOERS_DST}"
-visudo -c
+sudo -n mkdir -p "\${SYSTEMD_DIR}" >> "\${LOG_FILE}" 2>&1
 
-echo "[install.sh] Installing autostart entry..."
-mkdir -p "${AUTOSTART_DIR}"
-cp -a "${BUNDLE_DIR}/autostart/myscript.desktop" "${AUTOSTART_DIR}/"
+sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-agent.service"    "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
+sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-uploader.service" "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
+sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-poller.service"   "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
+sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-voice.service"    "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
+sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-avstream.service" "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
 
-echo "[install.sh] Reloading systemd..."
-systemctl daemon-reload
-sudo -n systemctl daemon-reload 2>/dev/null || true
+log_step "Installing sudoers rule"
 
-echo "[install.sh] Enabling robot services..."
+sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-agent" "\${SUDOERS_DST}" >> "\${LOG_FILE}" 2>&1
+sudo -n chown root:root "\${SUDOERS_DST}" >> "\${LOG_FILE}" 2>&1
+sudo -n chmod 0440 "\${SUDOERS_DST}" >> "\${LOG_FILE}" 2>&1
+sudo -n visudo -c >> "\${LOG_FILE}" 2>&1
+
+log_step "Installing autostart entry"
+
+mkdir -p "\${AUTOSTART_DIR}"
+cp -a "\${BUNDLE_DIR}/autostart/myscript.desktop" "\${AUTOSTART_DIR}/"
+
+log_step "Reloading systemd"
+
+sudo -n systemctl daemon-reload >> "\${LOG_FILE}" 2>&1
+
+log_step "Enabling services"
+
 for svc in \
   scanner-agent.service \
   scanner-uploader.service \
@@ -324,23 +302,16 @@ for svc in \
   scanner-voice.service \
   scanner-avstream.service
 do
-  systemctl enable "${svc}" 2>/dev/null || true
-  sudo -n systemctl enable "${svc}" 2>/dev/null || true
+  log_step "Enable \$svc"
+  sudo -n systemctl enable "\${svc}" >> "\${LOG_FILE}" 2>&1
 done
 
-echo "[install.sh] Restarting robot services..."
-for svc in \
-  scanner-agent.service \
-  scanner-uploader.service \
-  scanner-poller.service \
-  scanner-voice.service \
-  scanner-avstream.service
-do
-  systemctl restart "${svc}" 2>/dev/null || true
-  sudo -n systemctl restart "${svc}" 2>/dev/null || true
-done
+log_step "Bundle install completed successfully"
+log_step "Rebooting system"
 
-echo "[install.sh] Bundle install completed."
+sync
+sleep 2
+sudo -n /usr/sbin/reboot >> "\${LOG_FILE}" 2>&1 || sudo -n /sbin/reboot >> "\${LOG_FILE}" 2>&1 || reboot
 EOF
 
 chmod +x "${BUNDLE_DIR}/install.sh"
