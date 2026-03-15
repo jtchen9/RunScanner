@@ -4,13 +4,13 @@ set -euo pipefail
 # ------------------------------------------------------------
 # Bundle metadata (EDIT HERE WHEN BUMPING VERSION)
 # ------------------------------------------------------------
-BUNDLE_ID="robotBundle2.0"
+BUNDLE_ID="apBundle1.0"
 BASE_DIR="/opt/_RunScanner"
 OUT_DIR="${BASE_DIR}/_bundle_build"
 BUNDLE_DIR="${OUT_DIR}/${BUNDLE_ID}"
 ZIP_NAME="${BUNDLE_ID}.zip"
 
-echo "=== Building bundle: ${BUNDLE_ID} ==="
+echo "=== Building AP bundle: ${BUNDLE_ID} ==="
 
 # ------------------------------------------------------------
 # Safety checks
@@ -19,49 +19,34 @@ cd "${BASE_DIR}"
 
 # One single source of truth for top-level files
 TOP_LEVEL_FILES=(
-  agent.py
+  ap_agent.py
+  ap_dispatch.py
+  ap_handlers_status.py
+  ap_handlers_traffic.py
+  ap_register.py
+  ap_register_until_ok.sh
+  ap_uploader.py
   bundle_manager.py
+  common_ap_nms.py
   common_log.py
   common_nms.py
   common_register.py
   config.py
-  main.py
-  make_bundle.sh
-  parse_iw.py
-  register.py
-  register_until_ok.sh
-  robot_agent.py
-  robot_agent_handlers.py
-  robot_dispatch.py
-  robot_handlers_audio.py
-  robot_handlers_av.py
-  robot_handlers_scan.py
-  robot_handlers_voice.py
-  robot_uploader.py
-  scan_payload.py
-  scan_wifi.sh
-  uploader.py
-  windows.py
+  ap_make_bundle.sh
 )
 
 REQUIRED_DIRS=(
-  autostart
-  av
   services
-  voice
 )
 
 REQUIRED_SERVICE_FILES=(
-  services/scanner-agent
-  services/scanner-agent.service
-  services/scanner-avstream.service
-  services/scanner-poller.service
-  services/scanner-uploader.service
-  services/scanner-voice.service
+  services/ap-agent.service
+  services/ap-uploader.service
 )
 
-REQUIRED_AUTOSTART_FILES=(
-  autostart/myscript.desktop
+# Optional sudoers file for AP bundle install / service control
+OPTIONAL_SERVICE_FILES=(
+  services/ap-agent
 )
 
 for f in "${TOP_LEVEL_FILES[@]}"; do
@@ -85,13 +70,6 @@ for f in "${REQUIRED_SERVICE_FILES[@]}"; do
   fi
 done
 
-for f in "${REQUIRED_AUTOSTART_FILES[@]}"; do
-  if [[ ! -f "${f}" ]]; then
-    echo "ERROR: required autostart file missing: ${f}"
-    exit 1
-  fi
-done
-
 # ------------------------------------------------------------
 # Prepare staging directory
 # ------------------------------------------------------------
@@ -111,21 +89,10 @@ for d in "${REQUIRED_DIRS[@]}"; do
   cp -a "${d}" "${BUNDLE_DIR}/"
 done
 
-# Optional extras if present
-OPTIONAL_FILES=(
-  ap_agent.py
-  ap_dispatch.py
-  ap_handlers_status.py
-  ap_handlers_traffic.py
-  ap_register.py
-  ap_register_until_ok.sh
-  ap_uploader.py
-  common_ap_nms.py
-)
-
-for f in "${OPTIONAL_FILES[@]}"; do
+for f in "${OPTIONAL_SERVICE_FILES[@]}"; do
   if [[ -f "${f}" ]]; then
-    cp "${f}" "${BUNDLE_DIR}/"
+    mkdir -p "${BUNDLE_DIR}/services"
+    cp -a "${f}" "${BUNDLE_DIR}/services/"
   fi
 done
 
@@ -155,15 +122,12 @@ log_step() {
   echo "[install.sh] \$(date '+%F %T') \$*" >> "\${LOG_FILE}"
 }
 
-log_step "START bundle install"
-
-echo "[install.sh] Applying robot bundle..."
+log_step "START AP bundle install"
 
 BASE_DIR="/opt/_RunScanner"
 BUNDLE_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
-AUTOSTART_DIR="/home/pi/.config/autostart"
 SYSTEMD_DIR="/etc/systemd/system"
-SUDOERS_DST="/etc/sudoers.d/scanner-agent"
+SUDOERS_DST="/etc/sudoers.d/ap-agent"
 
 TOP_LEVEL_FILES=(
 ${TOP_LEVEL_FILES_STR})
@@ -187,14 +151,19 @@ for d in "\${REQUIRED_DIRS[@]}"; do
   fi
 done
 
-log_step "Stopping robot services"
+# Keep ap-agent alive; it is the executor of the update.
+STOP_SERVICES=(
+  ap-uploader.service
+)
 
-for svc in \
-  scanner-uploader.service \
-  scanner-poller.service \
-  scanner-voice.service \
-  scanner-avstream.service
-do
+ENABLE_SERVICES=(
+  ap-agent.service
+  ap-uploader.service
+)
+
+log_step "Stopping AP services"
+
+for svc in "\${STOP_SERVICES[@]}"; do
   log_step "Stopping \$svc"
   systemctl stop "\${svc}" >> "\${LOG_FILE}" 2>&1 || true
   sudo -n systemctl stop "\${svc}" >> "\${LOG_FILE}" 2>&1 || true
@@ -202,10 +171,8 @@ done
 
 KEEP_RUNTIME_ITEMS=(
   _bundle_build
-  ap_traffic_config.json
   bundles
   last_register.json
-  MoveOut
   nms_base.txt
   scanner_name.txt
   TestCodes
@@ -216,7 +183,8 @@ log_step "Cleaning runtime directory"
 mkdir -p "\${BASE_DIR}"
 cd "\${BASE_DIR}"
 
-for item in * .*; do
+shopt -s dotglob nullglob
+for item in *; do
   [[ "\${item}" == "." || "\${item}" == ".." ]] && continue
 
   keep=false
@@ -232,6 +200,7 @@ for item in * .*; do
     rm -rf "\${item}"
   fi
 done
+shopt -u dotglob nullglob
 
 log_step "Copying payload"
 
@@ -243,78 +212,37 @@ for d in "\${REQUIRED_DIRS[@]}"; do
   cp -a "\${BUNDLE_DIR}/\${d}" "\${BASE_DIR}/"
 done
 
-log_step "Copying optional AP files"
-
-for f in \
-  ap_agent.py \
-  ap_dispatch.py \
-  ap_handlers_status.py \
-  ap_handlers_traffic.py \
-  ap_register.py \
-  ap_register_until_ok.sh \
-  ap_uploader.py \
-  common_ap_nms.py
-do
-  if [[ -f "\${BUNDLE_DIR}/\${f}" ]]; then
-    cp -a "\${BUNDLE_DIR}/\${f}" "\${BASE_DIR}/"
-  fi
-done
-
 log_step "Fixing permissions"
 
 find "\${BASE_DIR}" -type f -name "*.sh" -exec chmod +x {} \; >> "\${LOG_FILE}" 2>&1 || true
 find "\${BASE_DIR}" -type f -name "*.py" -exec chmod +x {} \; >> "\${LOG_FILE}" 2>&1 || true
-chmod -R u+rwX "\${BASE_DIR}/voice" >> "\${LOG_FILE}" 2>&1 || true
-chmod -R u+rwX "\${BASE_DIR}/av" >> "\${LOG_FILE}" 2>&1 || true
 
 log_step "Installing systemd service files"
 
 sudo -n mkdir -p "\${SYSTEMD_DIR}" >> "\${LOG_FILE}" 2>&1
+sudo -n cp -a "\${BUNDLE_DIR}/services/ap-agent.service"    "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
+sudo -n cp -a "\${BUNDLE_DIR}/services/ap-uploader.service" "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
 
-sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-agent.service"    "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
-sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-uploader.service" "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
-sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-poller.service"   "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
-sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-voice.service"    "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
-sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-avstream.service" "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
-
-log_step "Installing sudoers rule"
-
-sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-agent" "\${SUDOERS_DST}" >> "\${LOG_FILE}" 2>&1
-sudo -n chown root:root "\${SUDOERS_DST}" >> "\${LOG_FILE}" 2>&1
-sudo -n chmod 0440 "\${SUDOERS_DST}" >> "\${LOG_FILE}" 2>&1
-sudo -n visudo -c >> "\${LOG_FILE}" 2>&1
-
-log_step "Installing autostart entry"
-
-mkdir -p "\${AUTOSTART_DIR}"
-cp -a "\${BUNDLE_DIR}/autostart/myscript.desktop" "\${AUTOSTART_DIR}/"
+if [[ -f "\${BUNDLE_DIR}/services/ap-agent" ]]; then
+  log_step "Installing sudoers rule"
+  sudo -n cp -a "\${BUNDLE_DIR}/services/ap-agent" "\${SUDOERS_DST}" >> "\${LOG_FILE}" 2>&1
+  sudo -n chown root:root "\${SUDOERS_DST}" >> "\${LOG_FILE}" 2>&1
+  sudo -n chmod 0440 "\${SUDOERS_DST}" >> "\${LOG_FILE}" 2>&1
+  sudo -n visudo -c >> "\${LOG_FILE}" 2>&1
+fi
 
 log_step "Reloading systemd"
 
 sudo -n systemctl daemon-reload >> "\${LOG_FILE}" 2>&1
 
-log_step "Enabling boot services"
+log_step "Enabling services"
 
-for svc in \
-  scanner-agent.service \
-  scanner-uploader.service \
-  scanner-voice.service
-do
+for svc in "\${ENABLE_SERVICES[@]}"; do
   log_step "Enable \$svc"
   sudo -n systemctl enable "\${svc}" >> "\${LOG_FILE}" 2>&1
 done
 
-log_step "Disabling non-boot services"
-
-for svc in \
-  scanner-poller.service \
-  scanner-avstream.service
-do
-  log_step "Disable \$svc"
-  sudo -n systemctl disable "\${svc}" >> "\${LOG_FILE}" 2>&1 || true
-done
-
-log_step "Bundle install completed successfully"
+log_step "AP bundle install completed successfully"
 log_step "Rebooting system"
 
 sync
@@ -336,7 +264,8 @@ zip -r "${ZIP_NAME}" "${BUNDLE_ID}" > /dev/null
 # ------------------------------------------------------------
 # Final report
 # ------------------------------------------------------------
-echo "=== Bundle build complete ==="
+echo "=== AP bundle build complete ==="
 echo "Output: ${OUT_DIR}/${ZIP_NAME}"
 echo "Contents:"
 zipinfo -1 "${ZIP_NAME}"
+
