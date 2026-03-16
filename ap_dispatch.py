@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from typing import Any, Dict, Tuple, Callable
 
-from common_nms import parse_args_json, report_installed_bundle
+from common_nms import parse_args_json
 from bundle_manager import apply_bundle
 from ap_handlers_traffic import set_traffic_enabled
 from ap_handlers_status import get_ap_status
@@ -37,16 +37,6 @@ def dispatch(
 
         ok, detail = apply_bundle(bundle_id, url)
         status = "ok" if ok else "error"
-
-        if ok:
-            report_installed_bundle(
-                nms_base=nms_base,
-                scanner=scanner,
-                installed_version=bundle_id,
-                http_timeout_sec=http_timeout_sec,
-                log_func=log_func,
-            )
-
         return status, detail
 
     if action == "ap.association.get":
