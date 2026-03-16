@@ -77,7 +77,7 @@ def main() -> None:
             continue
 
         status_obj = get_ap_status()
-        status_obj["device_name"] = scanner      
+        status_obj["device_name"] = scanner
         status_body = {
             "time": local_ts(),
             "status": status_obj,
@@ -117,19 +117,52 @@ def main() -> None:
 
             log(f"AP_EXEC cmd_id={cmd_id} action={action} execute_at={execute_at} xid={xid}")
 
-            status, detail = dispatch(fields)
-            log(f"AP_RESULT cmd_id={cmd_id} status={status} detail={detail}")
+            if action == "bundle.apply":
+                pre_status = "ok"
+                pre_detail = "bundle.apply accepted; AP will install bundle and reboot"
 
-            ack_command(
-                nms_base=nms_base,
-                scanner=scanner,
-                cmd_id=cmd_id,
-                status=status,
-                detail=detail,
-                http_timeout_sec=HTTP_TIMEOUT_SEC,
-                ts_func=local_ts,
-                log_func=log,
-            )
+                ack_command(
+                    nms_base=nms_base,
+                    scanner=scanner,
+                    cmd_id=cmd_id,
+                    status=pre_status,
+                    detail=pre_detail,
+                    http_timeout_sec=HTTP_TIMEOUT_SEC,
+                    ts_func=local_ts,
+                    log_func=log,
+                )
+                log(f"AP_PRE-ACK cmd_id={cmd_id} status={pre_status} detail={pre_detail}")
+                log(f"AP_BUNDLE begin apply after pre-ack cmd_id={cmd_id}")
+
+                status, detail = dispatch(
+                    nms_base=nms_base,
+                    scanner=scanner,
+                    cmd_fields=fields,
+                    http_timeout_sec=HTTP_TIMEOUT_SEC,
+                    log_func=log,
+                )
+                log(f"AP_RESULT cmd_id={cmd_id} status={status} detail={detail}")
+
+            else:
+                status, detail = dispatch(
+                    nms_base=nms_base,
+                    scanner=scanner,
+                    cmd_fields=fields,
+                    http_timeout_sec=HTTP_TIMEOUT_SEC,
+                    log_func=log,
+                )
+                log(f"AP_RESULT cmd_id={cmd_id} status={status} detail={detail}")
+
+                ack_command(
+                    nms_base=nms_base,
+                    scanner=scanner,
+                    cmd_id=cmd_id,
+                    status=status,
+                    detail=detail,
+                    http_timeout_sec=HTTP_TIMEOUT_SEC,
+                    ts_func=local_ts,
+                    log_func=log,
+                )
 
         time.sleep(POLL_INTERVAL_SEC)
 
@@ -139,4 +172,3 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         pass
-    

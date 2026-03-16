@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Callable
 
-from common_nms import parse_args_json
+from common_nms import parse_args_json, report_installed_bundle
+from bundle_manager import apply_bundle
 from ap_handlers_traffic import set_traffic_enabled
 from ap_handlers_status import get_ap_status
 
 
-def dispatch(cmd_fields: Dict[str, Any]) -> Tuple[str, str]:
+def dispatch(
+    nms_base: str,
+    scanner: str,
+    cmd_fields: Dict[str, Any],
+    http_timeout_sec: int,
+    log_func: Callable[[str], None],
+) -> Tuple[str, str]:
     """
-    Dummy AP dispatcher.
+    AP dispatcher.
     Returns (status, detail).
     """
     category = (cmd_fields.get("category") or "").strip()
@@ -17,6 +24,30 @@ def dispatch(cmd_fields: Dict[str, Any]) -> Tuple[str, str]:
 
     if category and category != "ap":
         return "error", f"unsupported category={category}"
+
+    if action == "bundle.apply":
+        bundle_id = (args.get("bundle_id") or "").strip() or (cmd_fields.get("bundle_id") or "").strip()
+        url = (args.get("url") or "").strip() or (cmd_fields.get("url") or "").strip()
+
+        if not bundle_id:
+            return "error", "bundle.apply missing bundle_id"
+
+        if not url:
+            url = f"{nms_base}/bootstrap/bundle/{bundle_id}"
+
+        ok, detail = apply_bundle(bundle_id, url)
+        status = "ok" if ok else "error"
+
+        if ok:
+            report_installed_bundle(
+                nms_base=nms_base,
+                scanner=scanner,
+                installed_version=bundle_id,
+                http_timeout_sec=http_timeout_sec,
+                log_func=log_func,
+            )
+
+        return status, detail
 
     if action == "ap.association.get":
         st = get_ap_status()

@@ -1,0 +1,24 @@
+# /etc/systemd/system/ap-agent.service
+[Unit]
+Description=AP agent (AP polls NMS commands and ACKs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/_RunScanner
+Environment=PYTHONPATH=/opt/_RunScanner
+RuntimeDirectory=ap-agent
+RuntimeDirectoryMode=0755
+
+# Clear cached registration info once per boot before AP registration
+ExecStartPre=/bin/bash -lc 'MARK=/run/ap-agent/reg_cleaned; if [ ! -f "$MARK" ]; then rm -f /opt/_RunScanner/nms_base.txt /opt/_RunScanner/scanner_name.txt /opt/_RunScanner/last_register.json; touch "$MARK"; fi'
+
+ExecStartPre=/usr/bin/bash /opt/_RunScanner/ap_register_until_ok.sh
+ExecStart=/usr/bin/python3 /opt/_RunScanner/ap_agent.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

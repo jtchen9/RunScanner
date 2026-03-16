@@ -1,0 +1,17 @@
+# /etc/systemd/system/ap-uploader.service
+[Unit]
+Description=AP uploader (AP status/traffic uploader -> NMS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/_RunScanner
+Environment=PYTHONPATH=/opt/_RunScanner
+ExecStart=/usr/bin/python3 /opt/_RunScanner/ap_uploader.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
