@@ -1,5 +1,6 @@
 # /etc/sudoers.d/scanner-agent
-# Allow pi to control only our scanner services without password.
+# Allow pi to control only our scanner services and the minimal
+# privileged commands needed by bundle install and identity transition.
 
 pi ALL=(root) NOPASSWD: \
   /usr/bin/systemctl start scanner-poller.service, \
@@ -14,6 +15,9 @@ pi ALL=(root) NOPASSWD: \
   /usr/bin/systemctl start scanner-avstream.service, \
   /usr/bin/systemctl stop scanner-avstream.service, \
   /usr/bin/systemctl restart scanner-avstream.service, \
+  /usr/bin/systemctl stop tailscaled, \
+  /usr/bin/systemctl start tailscaled, \
+  /usr/bin/systemctl restart tailscaled, \
   /usr/bin/systemctl enable scanner-agent.service, \
   /usr/bin/systemctl disable scanner-agent.service, \
   /usr/bin/systemctl enable scanner-uploader.service, \
@@ -38,6 +42,9 @@ pi ALL=(root) NOPASSWD: \
   /bin/systemctl start scanner-avstream.service, \
   /bin/systemctl stop scanner-avstream.service, \
   /bin/systemctl restart scanner-avstream.service, \
+  /bin/systemctl stop tailscaled, \
+  /bin/systemctl start tailscaled, \
+  /bin/systemctl restart tailscaled, \
   /bin/systemctl enable scanner-agent.service, \
   /bin/systemctl disable scanner-agent.service, \
   /bin/systemctl enable scanner-uploader.service, \
@@ -49,4 +56,16 @@ pi ALL=(root) NOPASSWD: \
   /bin/systemctl is-active scanner-agent.service, \
   /bin/systemctl is-active scanner-avstream.service, \
   /bin/systemctl status scanner-avstream.service, \
-  /bin/systemctl daemon-reload
+  /bin/systemctl daemon-reload, \
+  /usr/bin/cp, \
+  /bin/cp, \
+  /usr/bin/chmod, \
+  /bin/chmod, \
+  /usr/bin/rm, \
+  /bin/rm, \
+  /usr/bin/bash, \
+  /bin/bash, \
+  /usr/bin/hostnamectl set-hostname *, \
+  /bin/hostnamectl set-hostname *, \
+  /usr/sbin/reboot, \
+  /sbin/reboot

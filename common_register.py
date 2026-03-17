@@ -183,12 +183,14 @@ def perform_registration(
     if r.status_code == 200:
         scanner = ""
         llm_weblink = ""
+        tailscaled_state_b64 = ""
 
         try:
             data = r.json()
             if isinstance(data, dict):
                 scanner = (data.get("scanner") or "").strip()
                 llm_weblink = (data.get("llm_weblink") or "").strip()
+                tailscaled_state_b64 = (data.get("tailscaled_state_b64") or "").strip()
         except Exception:
             pass
 
@@ -213,6 +215,7 @@ def perform_registration(
                 "ip": ip,
                 "scanner": "",
                 "llm_weblink": "",
+                "tailscaled_state_b64": "",
                 "nms_base": nms_base,
                 "http_code": 200,
             }
@@ -241,6 +244,7 @@ def perform_registration(
                 "ip": ip,
                 "scanner": scanner,
                 "llm_weblink": llm_weblink,
+                "tailscaled_state_b64": tailscaled_state_b64,
                 "nms_base": nms_base,
                 "http_code": 200,
             }
@@ -263,6 +267,7 @@ def perform_registration(
             "ip": ip,
             "scanner": scanner,
             "llm_weblink": llm_weblink,
+            "tailscaled_state_b64": tailscaled_state_b64,
             "nms_base": nms_base,
             "http_code": 200,
         }
