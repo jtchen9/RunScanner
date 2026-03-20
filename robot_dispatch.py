@@ -19,6 +19,10 @@ from robot_agent_handlers import (
 )
 from bundle_manager import apply_bundle
 from voice.voice_agent_api import exec_voice_llm_config_set
+from robot_handlers_traffic import (
+    exec_traffic_session_start,
+    exec_traffic_session_stop,
+)
 
 
 def dispatch(
@@ -36,7 +40,7 @@ def dispatch(
     action = (cmd_fields.get("action") or "").strip()
     args = parse_args_json(cmd_fields.get("args_json") or "")
 
-    if category and category not in ("scan", "av", "voice"):
+    if category and category not in ("scan", "av", "voice", "traffic"):
         return "error", f"unsupported category={category}"
 
     if action == "scan.start":
@@ -74,6 +78,14 @@ def dispatch(
             )
 
         return status, detail
+
+    if action == "traffic.session.start":
+        ok, detail = exec_traffic_session_start(scanner, args)
+        return ("ok" if ok else "error"), detail
+
+    if action == "traffic.session.stop":
+        ok, detail = exec_traffic_session_stop(args)
+        return ("ok" if ok else "error"), detail
 
     if action == "av.stream.start":
         ok, detail = exec_av_stream_start(scanner, args)
