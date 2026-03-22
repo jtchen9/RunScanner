@@ -55,6 +55,7 @@ REQUIRED_SERVICE_FILES=(
   services/scanner-agent
   services/scanner-agent.service
   services/scanner-avstream.service
+  services/scanner-iperf3@.service
   services/scanner-poller.service
   services/scanner-uploader.service
   services/scanner-voice.service
@@ -200,6 +201,15 @@ do
   sudo -n systemctl stop "\${svc}" >> "\${LOG_FILE}" 2>&1 || true
 done
 
+log_step "Stopping scanner-iperf3 template instances"
+
+for p in $(seq 5201 5212); do
+  svc="scanner-iperf3@${p}.service"
+  log_step "Stopping ${svc}"
+  systemctl stop "${svc}" >> "${LOG_FILE}" 2>&1 || true
+  sudo -n systemctl stop "${svc}" >> "${LOG_FILE}" 2>&1 || true
+done
+
 KEEP_RUNTIME_ITEMS=(
   _bundle_build
   ap_traffic_config.json
@@ -276,6 +286,7 @@ sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-uploader.service" "\${SYSTEMD_DIR
 sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-poller.service"   "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
 sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-voice.service"    "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
 sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-avstream.service" "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
+sudo -n cp -a "\${BUNDLE_DIR}/services/scanner-iperf3@.service" "\${SYSTEMD_DIR}/" >> "\${LOG_FILE}" 2>&1
 
 log_step "Installing sudoers rule"
 
@@ -302,6 +313,15 @@ for svc in \
 do
   log_step "Enable \$svc"
   sudo -n systemctl enable "\${svc}" >> "\${LOG_FILE}" 2>&1
+done
+
+log_step "Stopping scanner-iperf3 template instances"
+
+for p in $(seq 5201 5212); do
+  svc="scanner-iperf3@${p}.service"
+  log_step "Stopping ${svc}"
+  systemctl stop "${svc}" >> "${LOG_FILE}" 2>&1 || true
+  sudo -n systemctl stop "${svc}" >> "${LOG_FILE}" 2>&1 || true
 done
 
 log_step "Disabling non-boot services"

@@ -1,0 +1,18 @@
+# /etc/systemd/system/scanner-iperf3@.service
+# To activate, run:
+# for p in {5201..5212}; do
+#   sudo systemctl enable scanner-iperf3@$p
+#   sudo systemctl start scanner-iperf3@$p
+# done
+
+[Unit]
+Description=iperf3 server on port %i
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/iperf3 -s -p %i
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

@@ -73,6 +73,7 @@ def stop_robot_services() -> None:
         "scanner-voice.service",
         "scanner-avstream.service",
     ]
+    services += [f"scanner-iperf3@{p}.service" for p in range(5201, 5213)]
     for svc in services:
         _systemctl("stop", svc)
 
