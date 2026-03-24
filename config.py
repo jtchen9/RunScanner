@@ -24,9 +24,9 @@ NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
 NMS_TIMEOUT_SEC = 2
 NMS_PORT = 8000
 
-# ------------------------------------------------------------------
+# --------------
 # Time (MUST match NMS)
-# ------------------------------------------------------------------
+# --------------
 
 # ONE official time format everywhere (Pi <-> NMS)
 TIME_FMT: str = "%Y-%m-%d-%H:%M:%S"
@@ -35,9 +35,9 @@ def local_ts() -> str:
     """Return current local time string in TIME_FMT."""
     return datetime.now().strftime(TIME_FMT)
 
-# ------------------------------------------------------------------
+# --------------
 # bundle
-# ------------------------------------------------------------------
+# --------------
 NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
 NMS_TIMEOUT_SEC = 3
 
@@ -59,9 +59,9 @@ def get_bundle_version() -> str:
     except Exception:
         return "0"
 
-# ------------------------------------------------------------------
+# ----------------
 # NMS discovery
-# ------------------------------------------------------------------
+# ----------------
 def _probe_nms(base: str) -> bool:
     """Return True if NMS /health responds."""
     try:
@@ -148,32 +148,31 @@ def discover_nms_base(force: bool = False) -> Optional[str]:
 def get_nms_base() -> Optional[str]:
     return discover_nms_base(force=False)
 
-# ------------------------------------------------------------------
+# ----------------
 # System-wide endpoints (shared across the entire system)
-# ------------------------------------------------------------------
+# ----------------
 
 WEB_SERVER = "6g-private.com"
 
-# ------------------------------------------------------------------
+# -----------------
 # Services (systemd) + systemctl paths
-# ------------------------------------------------------------------
+# ------------------
 
 SERVICE_SCANNER_POLLER = "scanner-poller.service"
 SERVICE_UPLOADER = "scanner-uploader.service"
 SERVICE_AVSTREAM = "scanner-avstream.service"
 
-# ------------------------------------------------------------------
+# ----------------
 # Audio playback defaults (known-good on your Pi)
-# ------------------------------------------------------------------
+# ----------------
 
 MPV_BIN = "/usr/bin/mpv"
 AUDIO_AO_DEFAULT = "alsa"
 AUDIO_DEVICE_DEFAULT = "alsa/default"
 AUDIO_VOLUME_DEFAULT = 90
 
-# ------------------------------------------------------------------
-# Registration / identity
-# ------------------------------------------------------------------
+# ------------------# Registration / identity
+# -----------------
 
 SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"
 LAST_REGISTER_FILE = BASE_DIR / "last_register.json"
@@ -190,15 +189,15 @@ def get_mac_address() -> str:
     except Exception:
         return ""
 
-# ------------------------------------------------------------------
+# ------------------
 # Scan data
-# ------------------------------------------------------------------
+# ------------------
 
 LATEST_JSON_FILE = Path("/tmp/latest_scan.json")
 
-# ------------------------------------------------------------------
+# ------------------
 # Audio / Video (AV)
-# ------------------------------------------------------------------
+# ------------------
 
 AV_DIR = BASE_DIR / "av"
 AV_CFG_FILE = AV_DIR / "av_stream_config.json"

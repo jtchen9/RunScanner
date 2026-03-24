@@ -8,8 +8,8 @@ m = DFRobot_DC_Motor_IIC(BUS, ADDR)
 st = m.begin()
 print("begin status:", st)
 
-KICK = 40      # breakaway
-CRUISE = 30    # desired slow speed
+KICK = 60      # breakaway
+CRUISE = 50    # desired slow speed
 
 # kick
 m.motor_movement([m.M1], m.CW, KICK)
