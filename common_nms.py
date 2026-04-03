@@ -11,6 +11,7 @@ def fetch_commands(
     poll_limit: int,
     http_timeout_sec: int,
     av_streaming: Optional[int] = None,
+    mobility_report: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
     """
     Poll NMS for due commands.
@@ -28,6 +29,9 @@ def fetch_commands(
     }
     if av_streaming is not None:
         params["av_streaming"] = av_streaming
+
+    if mobility_report:
+        params["mobility_report_json"] = json.dumps(mobility_report, ensure_ascii=False)
 
     try:
         r = requests.get(url, params=params, timeout=http_timeout_sec)

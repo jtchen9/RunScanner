@@ -10,7 +10,11 @@ import subprocess
 from common_log import append_log_line
 from common_nms import fetch_commands, ack_command
 from robot_dispatch import dispatch
-from robot_agent_handlers import get_av_streaming_flag
+from robot_agent_handlers import (
+    get_av_streaming_flag,
+    get_mobility_report_payload,
+    mark_mobility_report_sent,
+)
 
 from config import (
     BASE_DIR,
@@ -82,17 +86,26 @@ def main() -> None:
             time.sleep(OFFLINE_RETRY_SEC)
             continue
 
+        mobility_report = get_mobility_report_payload()
+
         ok, payload = fetch_commands(
             nms_base=nms_base,
             scanner=scanner,
             poll_limit=POLL_LIMIT,
             http_timeout_sec=HTTP_TIMEOUT_SEC,
             av_streaming=get_av_streaming_flag(),
+            mobility_report=mobility_report,
         )
         if not ok:
             log(f"poll fail scanner={scanner} via={nms_base} {payload}")
             time.sleep(POLL_INTERVAL_SEC)
             continue
+
+        # Option B:
+        # once command poll succeeds, clear the pending mobility report
+        # so outdated tag/location info will not keep interfering upstream.
+        if mobility_report:
+            mark_mobility_report_sent()
 
         cmds = payload.get("commands") or []
         if not cmds:
