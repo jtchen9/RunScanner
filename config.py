@@ -9,7 +9,7 @@ Single source of truth for:
 """
 
 import os
-import requests
+import urllib.request
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -21,38 +21,29 @@ SYSTEMCTL = "/usr/bin/systemctl"
 SUDO = "/usr/bin/sudo"
 BASE_DIR = Path("/opt/_RunScanner")
 NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
-NMS_TIMEOUT_SEC = 2
+NMS_TIMEOUT_SEC = 3
 NMS_PORT = 8000
 
-# --------------
-# Time (MUST match NMS)
-# --------------
+# Final-resort fixed NMS address for the new routed architecture
+FIXED_NMS_BASE = f"http://192.168.0.3:{NMS_PORT}"
 
-# ONE official time format everywhere (Pi <-> NMS)
+# -------------------------
+# Time (MUST match NMS)
+# -------------------------
+
 TIME_FMT: str = "%Y-%m-%d-%H:%M:%S"
 
 def local_ts() -> str:
-    """Return current local time string in TIME_FMT."""
     return datetime.now().strftime(TIME_FMT)
 
-# --------------
+# -------------------------
 # bundle
-# --------------
-NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
-NMS_TIMEOUT_SEC = 3
+# -------------------------
 
 BUNDLES_DIR = BASE_DIR / "bundles"
-ACTIVE_BUNDLE_FILE = BUNDLES_DIR / "active_bundle.txt"  # written by bundle_manager.py
-
+ACTIVE_BUNDLE_FILE = BUNDLES_DIR / "active_bundle.txt"
 
 def get_bundle_version() -> str:
-    """
-    Return current bundle version/id from bundles/active_bundle.txt.
-
-    Operational policy:
-    - SD-clone image should ship with a valid version like "robotBundle1.0".
-    - "0" is reserved as a fallback meaning: unknown/uninitialized (should be rare).
-    """
     try:
         s = ACTIVE_BUNDLE_FILE.read_text(encoding="utf-8").strip()
         return s if s else "0"
@@ -62,18 +53,15 @@ def get_bundle_version() -> str:
 # ----------------
 # NMS discovery
 # ----------------
+
 def _probe_nms(base: str) -> bool:
-    """Return True if NMS /health responds."""
     try:
-        r = requests.get(f"{base}/health", timeout=NMS_TIMEOUT_SEC)
+        r = urllib.request.get(f"{base}/health", timeout=NMS_TIMEOUT_SEC)
         return r.status_code == 200
     except Exception:
         return False
 
 def _get_local_ip() -> Optional[str]:
-    """
-    Get current primary IP (routing-based).
-    """
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("1.1.1.1", 80))
@@ -84,19 +72,12 @@ def _get_local_ip() -> Optional[str]:
         return None
 
 def _scan_ip(ip: str) -> Optional[str]:
-    """
-    Try probing a single IP for NMS.
-    """
     base = f"http://{ip}:{NMS_PORT}"
     if _probe_nms(base):
         return base
     return None
 
 def _scan_subnet_for_nms() -> Optional[str]:
-    """
-    Scan local /24 subnet for port 8000 NMS.
-    Uses thread pool for speed.
-    """
     local_ip = _get_local_ip()
     if not local_ip:
         return None
@@ -106,7 +87,6 @@ def _scan_subnet_for_nms() -> Optional[str]:
     except Exception:
         return None
 
-    # skip network/broadcast
     hosts = [str(ip) for ip in net.hosts()]
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
@@ -119,104 +99,113 @@ def _scan_subnet_for_nms() -> Optional[str]:
 
     return None
 
+def _write_nms_cache(base: str) -> None:
+    try:
+        NMS_CACHE_FILE.write_text(base, encoding="utf-8")
+    except Exception:
+        pass
+
 def discover_nms_base(force: bool = False) -> Optional[str]:
     """
-    Discover reachable NMS and cache it.
-
     Priority:
-    1) cached value (if still alive)
-    2) subnet scan
+    1) cached value in nms_base.txt
+    2) local subnet scan for port 8000
+    3) final-resort fixed IP 192.168.0.3
     """
 
-    # 1. cached
+    # 1. cached nms_base.txt
     if not force and NMS_CACHE_FILE.exists():
-        cached = NMS_CACHE_FILE.read_text().strip()
+        try:
+            cached = NMS_CACHE_FILE.read_text(encoding="utf-8").strip()
+        except Exception:
+            cached = ""
+
         if cached and _probe_nms(cached):
             return cached
 
-    # 2. subnet scan
+    # 2. local subnet scan
     found = _scan_subnet_for_nms()
     if found:
-        try:
-            NMS_CACHE_FILE.write_text(found, encoding="utf-8")
-        except Exception:
-            pass
+        _write_nms_cache(found)
         return found
+
+    # 3. final resort fixed NMS IP
+    if _probe_nms(FIXED_NMS_BASE):
+        _write_nms_cache(FIXED_NMS_BASE)
+        return FIXED_NMS_BASE
 
     return None
 
 def get_nms_base() -> Optional[str]:
     return discover_nms_base(force=False)
 
-# ----------------
-# System-wide endpoints (shared across the entire system)
-# ----------------
+# -------------------------
+# System-wide endpoints
+# -------------------------
 
 WEB_SERVER = "6g-private.com"
 
-# -----------------
-# Services (systemd) + systemctl paths
-# ------------------
+# -------------------------
+# Services + paths
+# -------------------------
 
 SERVICE_SCANNER_POLLER = "scanner-poller.service"
 SERVICE_UPLOADER = "scanner-uploader.service"
 SERVICE_AVSTREAM = "scanner-avstream.service"
-
-# ----------------
-# Audio playback defaults (known-good on your Pi)
-# ----------------
 
 MPV_BIN = "/usr/bin/mpv"
 AUDIO_AO_DEFAULT = "alsa"
 AUDIO_DEVICE_DEFAULT = "alsa/default"
 AUDIO_VOLUME_DEFAULT = 90
 
-# ------------------# Registration / identity
-# -----------------
-
 SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"
 LAST_REGISTER_FILE = BASE_DIR / "last_register.json"
 
-REG_IFACE_DEFAULT = "wlan0"
+def get_reg_iface() -> str:
+    """
+    Select the interface used for registration MAC.
 
-# def get_reg_iface() -> str:
-#     return os.getenv("REG_IFACE", REG_IFACE_DEFAULT)
+    Rules:
+    1) Use 'wan' if it exists (real AP)
+    2) Otherwise use 'wlan0' if it exists (robot)
+    3) Otherwise fall back to the first non-loopback interface
+    """
+    try:
+        if Path("/sys/class/net/wan").exists():
+            return "wan"
+
+        if Path("/sys/class/net/wlan0").exists():
+            return "wlan0"
+
+        net_path = Path("/sys/class/net")
+        for iface in net_path.iterdir():
+            name = iface.name
+            if name != "lo":
+                return name
+    except Exception:
+        pass
+
+    return "wlan0"
+
 
 def get_mac_address() -> str:
     try:
-        with open(f"/sys/class/net/{REG_IFACE_DEFAULT}/address") as f:
+        iface = get_reg_iface()
+        with open(f"/sys/class/net/{iface}/address") as f:
             return f.read().strip().lower()
     except Exception:
         return ""
-
-# ------------------
-# Scan data
-# ------------------
-
+    
 LATEST_JSON_FILE = Path("/tmp/latest_scan.json")
-
-# ------------------
-# Audio / Video (AV)
-# ------------------
 
 AV_DIR = BASE_DIR / "av"
 AV_CFG_FILE = AV_DIR / "av_stream_config.json"
-
-SERVICE_AVSTREAM = "scanner-avstream.service"
-
-# Default streaming target (can be overridden by command args)
 AV_DEFAULT_SERVER = WEB_SERVER
 AV_DEFAULT_RTSP_PORT = 8554
-AV_DEFAULT_TRANSPORT = "tcp"     # tcp|udp (we default tcp)
-AV_DEFAULT_PATH_PREFIX = ""      # optional prefix, usually empty
-
-# Default capture devices
+AV_DEFAULT_TRANSPORT = "tcp"
+AV_DEFAULT_PATH_PREFIX = ""
 AV_DEFAULT_VIDEO_DEV = "/dev/video0"
 AV_DEFAULT_AUDIO_DEV = "plughw:1,0"
-
-# Default capture format
 AV_DEFAULT_SIZE = "640x480"
 AV_DEFAULT_FPS = 30
-
-# Logging (if runner/service writes logs here)
 AV_LOG_FILE = AV_DIR / "av_stream.log"
