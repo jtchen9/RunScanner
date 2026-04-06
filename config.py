@@ -25,7 +25,7 @@ NMS_TIMEOUT_SEC = 3
 NMS_PORT = 8000
 
 # Final-resort fixed NMS address for the new routed architecture
-FIXED_NMS_BASE = f"http://192.168.0.3:{NMS_PORT}"
+FIXED_NMS_BASE = f"http://192.168.11.51:{NMS_PORT}"
 
 # -------------------------
 # Time (MUST match NMS)
@@ -56,8 +56,9 @@ def get_bundle_version() -> str:
 
 def _probe_nms(base: str) -> bool:
     try:
-        r = urllib.request.get(f"{base}/health", timeout=NMS_TIMEOUT_SEC)
-        return r.status_code == 200
+        req = urllib.request.Request(f"{base}/health")
+        with urllib.request.urlopen(req, timeout=NMS_TIMEOUT_SEC) as resp:
+            return resp.status == 200
     except Exception:
         return False
 
@@ -107,13 +108,14 @@ def _write_nms_cache(base: str) -> None:
 
 def discover_nms_base(force: bool = False) -> Optional[str]:
     """
-    Priority:
-    1) cached value in nms_base.txt
-    2) local subnet scan for port 8000
-    3) final-resort fixed IP 192.168.0.3
+    Discover reachable NMS.
+
+    Policy:
+    1) Try cached nms_base.txt
+    2) Fall back directly to fixed NMS base
+    3) No subnet scan
     """
 
-    # 1. cached nms_base.txt
     if not force and NMS_CACHE_FILE.exists():
         try:
             cached = NMS_CACHE_FILE.read_text(encoding="utf-8").strip()
@@ -123,13 +125,6 @@ def discover_nms_base(force: bool = False) -> Optional[str]:
         if cached and _probe_nms(cached):
             return cached
 
-    # 2. local subnet scan
-    found = _scan_subnet_for_nms()
-    if found:
-        _write_nms_cache(found)
-        return found
-
-    # 3. final resort fixed NMS IP
     if _probe_nms(FIXED_NMS_BASE):
         _write_nms_cache(FIXED_NMS_BASE)
         return FIXED_NMS_BASE

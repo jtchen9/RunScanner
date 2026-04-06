@@ -35,7 +35,7 @@ TOP_LEVEL_FILES=(
   config.py
   ap_make_bundle.sh
   ap_installer.sh
-  ap_mcs_sampler_daemon
+  ap_mcs_sampler_daemon.sh
 )
 
 OPTIONAL_TOP_LEVEL_FILES=(

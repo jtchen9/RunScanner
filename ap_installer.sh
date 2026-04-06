@@ -7,7 +7,6 @@ set -e
 BASE_DIR="/opt/_RunScanner"
 LOG_FILE="${BASE_DIR}/bundle_apply.log"
 
-# Ensure directory exists before logging
 mkdir -p "${BASE_DIR}"
 
 log_step() {
@@ -33,7 +32,7 @@ TOP_LEVEL_FILES="
   common_register.py
   config.py
   ap_make_bundle.sh
-  ap_mcs_sampler_daemon
+  ap_mcs_sampler_daemon.sh
 "
 
 REQUIRED_DIRS="services"
@@ -61,7 +60,7 @@ log_step "Stopping AP services"
 for svc in ${STOP_SERVICES}; do
   if [ -f "/etc/init.d/${svc}" ]; then
     log_step "Stopping $svc"
-    /etc/init.d/${svc} stop 2>&1 >> "${LOG_FILE}" || true
+    /etc/init.d/${svc} stop >> "${LOG_FILE}" 2>&1 || true
   else
     log_step "Service ${svc} not installed yet, skipping stop"
   fi
@@ -112,8 +111,8 @@ done
 
 log_step "Fixing permissions"
 
-find "${BASE_DIR}" -type f -name "*.sh" -exec chmod +x {} \; 2>&1 >> "${LOG_FILE}" || true
-find "${BASE_DIR}" -type f -name "*.py" -exec chmod +x {} \; 2>&1 >> "${LOG_FILE}" || true
+find "${BASE_DIR}" -type f -name "*.sh" -exec chmod +x {} \; >> "${LOG_FILE}" 2>&1 || true
+find "${BASE_DIR}" -type f -name "*.py" -exec chmod +x {} \; >> "${LOG_FILE}" 2>&1 || true
 
 log_step "Installing init.d service scripts"
 
@@ -141,7 +140,7 @@ ENABLE_SERVICES="ap-agent ap-uploader ap-mcs-sampler"
 
 for svc in ${ENABLE_SERVICES}; do
   log_step "Enable $svc"
-  /etc/init.d/${svc} enable 2>&1 >> "${LOG_FILE}" || true
+  /etc/init.d/${svc} enable >> "${LOG_FILE}" 2>&1 || true
 done
 
 log_step "AP bundle install completed successfully"
@@ -149,7 +148,7 @@ log_step "Starting services"
 
 for svc in ${ENABLE_SERVICES}; do
   log_step "Starting $svc"
-  /etc/init.d/${svc} start 2>&1 >> "${LOG_FILE}" || true
+  /etc/init.d/${svc} start >> "${LOG_FILE}" 2>&1 || true
 done
 
 log_step "Installation complete. Services started."

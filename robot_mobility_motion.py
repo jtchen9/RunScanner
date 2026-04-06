@@ -3,7 +3,7 @@ import time
 from typing import Tuple
 
 from TestGyro.DFRobot_RaspberryPi_DC_Motor import DFRobot_DC_Motor_IIC
-from TestGyro.icm20948 import ICM20948
+from icm20948 import ICM20948
 
 
 # =========================================================

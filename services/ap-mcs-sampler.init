@@ -5,7 +5,7 @@ STOP=11
 
 USE_PROCD=1
 
-SCRIPT="/opt/_RunScanner/ap_mcs_sampler_daemon"
+SCRIPT="/opt/_RunScanner/ap_mcs_sampler_daemon.sh"
 NAME="ap-mcs-sampler"
 PID_FILE="/var/run/mcs_sampler.pid"
 OUTPUT_FILE="/tmp/mcs_distributions.json"
@@ -41,7 +41,7 @@ stop_service() {
         kill $(cat "$PID_FILE") 2>/dev/null || true
         rm -f "$PID_FILE"
     fi
-    killall -9 ap_mcs_sampler_daemon 2>/dev/null || true
+    killall -9 ap_mcs_sampler_daemon.sh 2>/dev/null || true
     rm -f "$OUTPUT_FILE"
 }
 
