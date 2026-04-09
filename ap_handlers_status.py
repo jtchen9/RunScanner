@@ -202,9 +202,14 @@ def _collect_all_associations(interface_info: Dict[str, Dict[str, Any]]) -> List
             
             association = {
                 "sta_mac": sta.get("mac", ""),
+                "interface": sta.get("interface", ""),
                 "ssid": ssid,
                 "band": band,
+                "channel": channel,
+                "signal_dbm": sta.get("signal", 0),
                 "mcs": mcs,
+                "tx_bitrate": sta.get("tx_bitrate", "unknown"),
+                "rx_bitrate": sta.get("rx_bitrate", "unknown"),
             }
             associations.append(association)
     

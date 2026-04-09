@@ -21,48 +21,61 @@ SYSTEMCTL = "/usr/bin/systemctl"
 SUDO = "/usr/bin/sudo"
 BASE_DIR = Path("/opt/_RunScanner")
 NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
-NMS_TIMEOUT_SEC = 3
+NMS_TIMEOUT_SEC = 10  # Increased from 2 to 10 for slow NMS responses
 NMS_PORT = 8000
 
 # Final-resort fixed NMS address for the new routed architecture
+# FIXED_NMS_BASE = f"http://10.167.247.75:{NMS_PORT}"
 FIXED_NMS_BASE = f"http://192.168.11.51:{NMS_PORT}"
 
-# -------------------------
+# ------------------------------------------------------------------
 # Time (MUST match NMS)
-# -------------------------
+# ------------------------------------------------------------------
 
+# ONE official time format everywhere (Pi <-> NMS)
 TIME_FMT: str = "%Y-%m-%d-%H:%M:%S"
 
 def local_ts() -> str:
+    """Return current local time string in TIME_FMT."""
     return datetime.now().strftime(TIME_FMT)
 
-# -------------------------
+# ------------------------------------------------------------------
 # bundle
-# -------------------------
-
+# ------------------------------------------------------------------
 BUNDLES_DIR = BASE_DIR / "bundles"
-ACTIVE_BUNDLE_FILE = BUNDLES_DIR / "active_bundle.txt"
+ACTIVE_BUNDLE_FILE = BUNDLES_DIR / "active_bundle.txt"  # written by bundle_manager.py
+
 
 def get_bundle_version() -> str:
+    """
+    Return current bundle version/id from bundles/active_bundle.txt.
+
+    Operational policy:
+    - SD-clone image should ship with a valid version like "robotBundle1.0".
+    - "0" is reserved as a fallback meaning: unknown/uninitialized (should be rare).
+    """
     try:
         s = ACTIVE_BUNDLE_FILE.read_text(encoding="utf-8").strip()
         return s if s else "0"
     except Exception:
         return "0"
 
-# ----------------
+# ------------------------------------------------------------------
 # NMS discovery
-# ----------------
-
+# ------------------------------------------------------------------
 def _probe_nms(base: str) -> bool:
+    """Return True if NMS /health responds."""
     try:
         req = urllib.request.Request(f"{base}/health")
-        with urllib.request.urlopen(req, timeout=NMS_TIMEOUT_SEC) as resp:
-            return resp.status == 200
+        with urllib.request.urlopen(req, timeout=NMS_TIMEOUT_SEC) as response:
+            return response.status == 200
     except Exception:
         return False
 
 def _get_local_ip() -> Optional[str]:
+    """
+    Get current primary IP (routing-based).
+    """
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("1.1.1.1", 80))
@@ -73,12 +86,19 @@ def _get_local_ip() -> Optional[str]:
         return None
 
 def _scan_ip(ip: str) -> Optional[str]:
+    """
+    Try probing a single IP for NMS.
+    """
     base = f"http://{ip}:{NMS_PORT}"
     if _probe_nms(base):
         return base
     return None
 
 def _scan_subnet_for_nms() -> Optional[str]:
+    """
+    Scan local /24 subnet for port 8000 NMS.
+    Uses thread pool for speed.
+    """
     local_ip = _get_local_ip()
     if not local_ip:
         return None
@@ -88,6 +108,7 @@ def _scan_subnet_for_nms() -> Optional[str]:
     except Exception:
         return None
 
+    # skip network/broadcast
     hosts = [str(ip) for ip in net.hosts()]
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
@@ -108,7 +129,7 @@ def _write_nms_cache(base: str) -> None:
 
 def discover_nms_base(force: bool = False) -> Optional[str]:
     """
-    Discover reachable NMS.
+    Discover reachable NMS and cache it.
 
     Policy:
     1) Try cached nms_base.txt
@@ -116,6 +137,7 @@ def discover_nms_base(force: bool = False) -> Optional[str]:
     3) No subnet scan
     """
 
+    # 1. cached
     if not force and NMS_CACHE_FILE.exists():
         try:
             cached = NMS_CACHE_FILE.read_text(encoding="utf-8").strip()
@@ -134,24 +156,32 @@ def discover_nms_base(force: bool = False) -> Optional[str]:
 def get_nms_base() -> Optional[str]:
     return discover_nms_base(force=False)
 
-# -------------------------
-# System-wide endpoints
-# -------------------------
+# ------------------------------------------------------------------
+# System-wide endpoints (shared across the entire system)
+# ------------------------------------------------------------------
 
 WEB_SERVER = "6g-private.com"
 
-# -------------------------
-# Services + paths
-# -------------------------
+# ------------------------------------------------------------------
+# Services (systemd) + systemctl paths
+# ------------------------------------------------------------------
 
 SERVICE_SCANNER_POLLER = "scanner-poller.service"
 SERVICE_UPLOADER = "scanner-uploader.service"
 SERVICE_AVSTREAM = "scanner-avstream.service"
 
+# ------------------------------------------------------------------
+# Audio playback defaults (known-good on your Pi)
+# ------------------------------------------------------------------
+
 MPV_BIN = "/usr/bin/mpv"
 AUDIO_AO_DEFAULT = "alsa"
 AUDIO_DEVICE_DEFAULT = "alsa/default"
 AUDIO_VOLUME_DEFAULT = 90
+
+# ------------------------------------------------------------------
+# Registration / identity
+# ------------------------------------------------------------------
 
 SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"
 LAST_REGISTER_FILE = BASE_DIR / "last_register.json"
@@ -190,17 +220,33 @@ def get_mac_address() -> str:
             return f.read().strip().lower()
     except Exception:
         return ""
-    
+
+# ------------------------------------------------------------------
+# Scan data
+# ------------------------------------------------------------------
+
 LATEST_JSON_FILE = Path("/tmp/latest_scan.json")
+
+# ------------------------------------------------------------------
+# Audio / Video (AV)
+# ------------------------------------------------------------------
 
 AV_DIR = BASE_DIR / "av"
 AV_CFG_FILE = AV_DIR / "av_stream_config.json"
+
+# Default streaming target (can be overridden by command args)
 AV_DEFAULT_SERVER = WEB_SERVER
 AV_DEFAULT_RTSP_PORT = 8554
-AV_DEFAULT_TRANSPORT = "tcp"
-AV_DEFAULT_PATH_PREFIX = ""
+AV_DEFAULT_TRANSPORT = "tcp"     # tcp|udp (we default tcp)
+AV_DEFAULT_PATH_PREFIX = ""      # optional prefix, usually empty
+
+# Default capture devices
 AV_DEFAULT_VIDEO_DEV = "/dev/video0"
 AV_DEFAULT_AUDIO_DEV = "plughw:1,0"
+
+# Default capture format
 AV_DEFAULT_SIZE = "640x480"
 AV_DEFAULT_FPS = 30
+
+# Logging (if runner/service writes logs here)
 AV_LOG_FILE = AV_DIR / "av_stream.log"
