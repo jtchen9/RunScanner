@@ -29,10 +29,9 @@ from robot_handlers_voice import (
 )
 
 from robot_handlers_mobility import (
-    exec_mobility_move_forward,
-    exec_mobility_move_backward,
-    exec_mobility_turn_left,
-    exec_mobility_turn_right,
+    exec_mobility_turn,
+    exec_mobility_turn_move_turn_forward,
+    exec_mobility_turn_move_turn_backward,
     exec_mobility_report_location,
 )
 

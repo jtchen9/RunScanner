@@ -20,6 +20,9 @@ STATE_PATH = Path("/tmp/mobility_state.json")
 
 _LOCK = threading.Lock()
 
+# Small settle gap between consecutive sub-actions in turn-move-turn
+TURN_MOVE_TURN_GAP_SEC = 0.2
+
 
 def _now_ts() -> float:
     return time.time()
@@ -141,67 +144,87 @@ def _parse_distance(args: Dict[str, Any]) -> Tuple[bool, float, str]:
         return False, 0.0, "BAD_COMMAND_ARGS missing_or_invalid distance_m"
 
 
-def _parse_angle(args: Dict[str, Any]) -> Tuple[bool, float, str]:
+def _parse_signed_angle(args: Dict[str, Any], field_name: str) -> Tuple[bool, float, str]:
     try:
-        angle_deg = float(args.get("angle_deg"))
+        angle_deg = float(args.get(field_name))
         return True, angle_deg, ""
     except Exception:
-        return False, 0.0, "BAD_COMMAND_ARGS missing_or_invalid angle_deg"
+        return False, 0.0, f"BAD_COMMAND_ARGS missing_or_invalid {field_name}"
 
 
-def _execute_with_location(
+def _run_signed_turn(angle_deg: float) -> Tuple[bool, str]:
+    """
+    Positive angle => left turn
+    Negative angle => right turn
+    Zero angle => no-op success
+    """
+    if angle_deg > 0:
+        return turn_left(abs(angle_deg))
+    if angle_deg < 0:
+        return turn_right(abs(angle_deg))
+    return True, "turn_noop angle_deg=0"
+
+
+def _run_move_direction(forward: bool, distance_m: float) -> Tuple[bool, str]:
+    return move_forward(distance_m) if forward else move_backward(distance_m)
+
+
+def _finalize_with_location() -> Tuple[bool, str]:
+    ok_loc, loc_data = _run_location_capture()
+    if not ok_loc:
+        _finish_state(
+            exec_status="error",
+            error_code="LOCATION_CAPTURE_FAIL",
+            error_detail=loc_data.get("error", "location_capture_failed"),
+            location_result=loc_data,
+        )
+        return False, f"LOCATION_CAPTURE_FAIL {loc_data.get('error', '')}".strip()
+
+    apriltag = loc_data.get("apriltag") or {}
+    if apriltag.get("ok") and int(apriltag.get("count", 0)) == 0:
+        _finish_state(
+            exec_status="error",
+            error_code="NO_TAG_VISIBLE",
+            error_detail="apriltag count=0",
+            location_result=loc_data,
+        )
+        return False, "NO_TAG_VISIBLE apriltag count=0"
+
+    _finish_state(
+        exec_status="completed",
+        error_code="",
+        error_detail="",
+        location_result=loc_data,
+    )
+    return True, "location_capture_done"
+
+
+def _execute_turn_only(
     command_name: str,
     args: Dict[str, Any],
-    motion_func,
-    motion_value: float,
+    angle_deg: float,
 ) -> Tuple[bool, str]:
     with _LOCK:
         if _is_busy():
             return _fail_immediate("MOBILITY_BUSY", f"{command_name} ignored while busy")
-
         _set_busy(command_name, args)
 
-    ok_motion = False
-    motion_detail = ""
-
     try:
-        ok_motion, motion_detail = motion_func(motion_value)
-        if not ok_motion:
+        ok_turn, turn_detail = _run_signed_turn(angle_deg)
+        if not ok_turn:
             _finish_state(
                 exec_status="error",
-                error_code="MOVE_EXEC_FAIL" if "move" in command_name else "TURN_EXEC_FAIL",
-                error_detail=motion_detail,
+                error_code="TURN_EXEC_FAIL",
+                error_detail=turn_detail,
                 location_result=None,
             )
-            return False, motion_detail
+            return False, turn_detail
 
-        ok_loc, loc_data = _run_location_capture()
-        if not ok_loc:
-            _finish_state(
-                exec_status="error",
-                error_code="LOCATION_CAPTURE_FAIL",
-                error_detail=loc_data.get("error", "location_capture_failed"),
-                location_result=loc_data,
-            )
-            return False, f"LOCATION_CAPTURE_FAIL {loc_data.get('error', '')}".strip()
+        ok_final, final_detail = _finalize_with_location()
+        if not ok_final:
+            return False, final_detail
 
-        apriltag = loc_data.get("apriltag") or {}
-        if apriltag.get("ok") and int(apriltag.get("count", 0)) == 0:
-            _finish_state(
-                exec_status="error",
-                error_code="NO_TAG_VISIBLE",
-                error_detail="apriltag count=0",
-                location_result=loc_data,
-            )
-            return False, "NO_TAG_VISIBLE apriltag count=0"
-
-        _finish_state(
-            exec_status="completed",
-            error_code="",
-            error_detail="",
-            location_result=loc_data,
-        )
-        return True, motion_detail
+        return True, turn_detail
 
     except Exception as e:
         _finish_state(
@@ -213,55 +236,135 @@ def _execute_with_location(
         return False, f"UNEXPECTED_EXCEPTION {e}"
 
 
-def exec_mobility_move_forward(args: Dict[str, Any]) -> Tuple[bool, str]:
-    ok, distance_m, detail = _parse_distance(args)
+def _execute_turn_move_turn(
+    command_name: str,
+    args: Dict[str, Any],
+    forward: bool,
+    pre_angle: float,
+    distance_m: float,
+    post_angle: float,
+) -> Tuple[bool, str]:
+    with _LOCK:
+        if _is_busy():
+            return _fail_immediate("MOBILITY_BUSY", f"{command_name} ignored while busy")
+        _set_busy(command_name, args)
+
+    try:
+        # 1) pre-turn
+        ok_pre, pre_detail = _run_signed_turn(pre_angle)
+        if not ok_pre:
+            _finish_state(
+                exec_status="error",
+                error_code="TURN_EXEC_FAIL",
+                error_detail=f"pre_turn_failed: {pre_detail}",
+                location_result=None,
+            )
+            return False, f"pre_turn_failed: {pre_detail}"
+
+        time.sleep(TURN_MOVE_TURN_GAP_SEC)
+
+        # 2) move
+        ok_move, move_detail = _run_move_direction(forward=forward, distance_m=distance_m)
+        if not ok_move:
+            _finish_state(
+                exec_status="error",
+                error_code="MOVE_EXEC_FAIL",
+                error_detail=move_detail,
+                location_result=None,
+            )
+            return False, move_detail
+
+        time.sleep(TURN_MOVE_TURN_GAP_SEC)
+
+        # 3) post-turn
+        ok_post, post_detail = _run_signed_turn(post_angle)
+        if not ok_post:
+            _finish_state(
+                exec_status="error",
+                error_code="TURN_EXEC_FAIL",
+                error_detail=f"post_turn_failed: {post_detail}",
+                location_result=None,
+            )
+            return False, f"post_turn_failed: {post_detail}"
+
+        # 4) one location capture at the very end
+        ok_final, final_detail = _finalize_with_location()
+        if not ok_final:
+            return False, final_detail
+
+        direction = "forward" if forward else "backward"
+        return True, (
+            f"turn_move_turn_{direction}_done "
+            f"pre_angle={pre_angle:.3f} "
+            f"distance_m={distance_m:.3f} "
+            f"post_angle={post_angle:.3f}"
+        )
+
+    except Exception as e:
+        _finish_state(
+            exec_status="error",
+            error_code="UNEXPECTED_EXCEPTION",
+            error_detail=str(e),
+            location_result=None,
+        )
+        return False, f"UNEXPECTED_EXCEPTION {e}"
+
+
+def exec_mobility_turn(args: Dict[str, Any]) -> Tuple[bool, str]:
+    ok, angle_deg, detail = _parse_signed_angle(args, "angle_deg")
     if not ok:
         return _fail_immediate("BAD_COMMAND_ARGS", detail)
 
-    return _execute_with_location(
-        command_name="mobility.move.forward",
+    return _execute_turn_only(
+        command_name="mobility.turn",
         args=args,
-        motion_func=move_forward,
-        motion_value=distance_m,
+        angle_deg=angle_deg,
     )
 
 
-def exec_mobility_move_backward(args: Dict[str, Any]) -> Tuple[bool, str]:
-    ok, distance_m, detail = _parse_distance(args)
-    if not ok:
-        return _fail_immediate("BAD_COMMAND_ARGS", detail)
+def exec_mobility_turn_move_turn_forward(args: Dict[str, Any]) -> Tuple[bool, str]:
+    ok_pre, pre_angle, detail_pre = _parse_signed_angle(args, "pre_angle")
+    if not ok_pre:
+        return _fail_immediate("BAD_COMMAND_ARGS", detail_pre)
 
-    return _execute_with_location(
-        command_name="mobility.move.backward",
+    ok_dist, distance_m, detail_dist = _parse_distance(args)
+    if not ok_dist:
+        return _fail_immediate("BAD_COMMAND_ARGS", detail_dist)
+
+    ok_post, post_angle, detail_post = _parse_signed_angle(args, "post_angle")
+    if not ok_post:
+        return _fail_immediate("BAD_COMMAND_ARGS", detail_post)
+
+    return _execute_turn_move_turn(
+        command_name="mobility.turn_move_turn.forward",
         args=args,
-        motion_func=move_backward,
-        motion_value=distance_m,
+        forward=True,
+        pre_angle=pre_angle,
+        distance_m=distance_m,
+        post_angle=post_angle,
     )
 
 
-def exec_mobility_turn_left(args: Dict[str, Any]) -> Tuple[bool, str]:
-    ok, angle_deg, detail = _parse_angle(args)
-    if not ok:
-        return _fail_immediate("BAD_COMMAND_ARGS", detail)
+def exec_mobility_turn_move_turn_backward(args: Dict[str, Any]) -> Tuple[bool, str]:
+    ok_pre, pre_angle, detail_pre = _parse_signed_angle(args, "pre_angle")
+    if not ok_pre:
+        return _fail_immediate("BAD_COMMAND_ARGS", detail_pre)
 
-    return _execute_with_location(
-        command_name="mobility.turn.left",
+    ok_dist, distance_m, detail_dist = _parse_distance(args)
+    if not ok_dist:
+        return _fail_immediate("BAD_COMMAND_ARGS", detail_dist)
+
+    ok_post, post_angle, detail_post = _parse_signed_angle(args, "post_angle")
+    if not ok_post:
+        return _fail_immediate("BAD_COMMAND_ARGS", detail_post)
+
+    return _execute_turn_move_turn(
+        command_name="mobility.turn_move_turn.backward",
         args=args,
-        motion_func=turn_left,
-        motion_value=angle_deg,
-    )
-
-
-def exec_mobility_turn_right(args: Dict[str, Any]) -> Tuple[bool, str]:
-    ok, angle_deg, detail = _parse_angle(args)
-    if not ok:
-        return _fail_immediate("BAD_COMMAND_ARGS", detail)
-
-    return _execute_with_location(
-        command_name="mobility.turn.right",
-        args=args,
-        motion_func=turn_right,
-        motion_value=angle_deg,
+        forward=False,
+        pre_angle=pre_angle,
+        distance_m=distance_m,
+        post_angle=post_angle,
     )
 
 
@@ -269,36 +372,12 @@ def exec_mobility_report_location(args: Dict[str, Any]) -> Tuple[bool, str]:
     with _LOCK:
         if _is_busy():
             return _fail_immediate("MOBILITY_BUSY", "mobility.report.location ignored while busy")
-
         _set_busy("mobility.report.location", args)
 
     try:
-        ok_loc, loc_data = _run_location_capture()
-        if not ok_loc:
-            _finish_state(
-                exec_status="error",
-                error_code="LOCATION_CAPTURE_FAIL",
-                error_detail=loc_data.get("error", "location_capture_failed"),
-                location_result=loc_data,
-            )
-            return False, f"LOCATION_CAPTURE_FAIL {loc_data.get('error', '')}".strip()
-
-        apriltag = loc_data.get("apriltag") or {}
-        if apriltag.get("ok") and int(apriltag.get("count", 0)) == 0:
-            _finish_state(
-                exec_status="error",
-                error_code="NO_TAG_VISIBLE",
-                error_detail="apriltag count=0",
-                location_result=loc_data,
-            )
-            return False, "NO_TAG_VISIBLE apriltag count=0"
-
-        _finish_state(
-            exec_status="completed",
-            error_code="",
-            error_detail="",
-            location_result=loc_data,
-        )
+        ok_final, final_detail = _finalize_with_location()
+        if not ok_final:
+            return False, final_detail
         return True, "location_report_done"
 
     except Exception as e:
@@ -309,4 +388,5 @@ def exec_mobility_report_location(args: Dict[str, Any]) -> Tuple[bool, str]:
             location_result=None,
         )
         return False, f"UNEXPECTED_EXCEPTION {e}"
+    
     

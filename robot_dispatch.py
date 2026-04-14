@@ -16,10 +16,9 @@ from robot_agent_handlers import (
     exec_voice_mode_set_local,
     exec_voice_script_set_local,
     report_installed_bundle,
-    exec_mobility_move_forward,
-    exec_mobility_move_backward,
-    exec_mobility_turn_left,
-    exec_mobility_turn_right,
+    exec_mobility_turn,
+    exec_mobility_turn_move_turn_forward,
+    exec_mobility_turn_move_turn_backward,
     exec_mobility_report_location,
 )
 from bundle_manager import apply_bundle
@@ -116,20 +115,16 @@ def dispatch(
     # mobility
     # ===================
     if category == "mobility":
-        if action == "mobility.move.forward":
-            ok, detail = exec_mobility_move_forward(args)
+        if action == "mobility.turn":
+            ok, detail = exec_mobility_turn(args)
             return ("ok" if ok else "error"), detail
 
-        if action == "mobility.move.backward":
-            ok, detail = exec_mobility_move_backward(args)
+        if action == "mobility.turn_move_turn.forward":
+            ok, detail = exec_mobility_turn_move_turn_forward(args)
             return ("ok" if ok else "error"), detail
 
-        if action == "mobility.turn.left":
-            ok, detail = exec_mobility_turn_left(args)
-            return ("ok" if ok else "error"), detail
-
-        if action == "mobility.turn.right":
-            ok, detail = exec_mobility_turn_right(args)
+        if action == "mobility.turn_move_turn.backward":
+            ok, detail = exec_mobility_turn_move_turn_backward(args)
             return ("ok" if ok else "error"), detail
 
         if action == "mobility.report.location":
@@ -137,6 +132,7 @@ def dispatch(
             return ("ok" if ok else "error"), detail
 
         return "error", f"unknown mobility action: {action}"
+
 
     # ====================
     # voice

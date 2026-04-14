@@ -1,0 +1,2 @@
+Buck set at output voltage of 8.5-9V, not current-limited
+
