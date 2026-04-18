@@ -4,8 +4,12 @@ from typing import Tuple
 
 from TestGyro.DFRobot_RaspberryPi_DC_Motor import DFRobot_DC_Motor_IIC
 from icm20948 import ICM20948
+from robot_mobility_vl53l1x import check_blocked
 
-
+TOF_STOP_THRESHOLD_MM = 300
+MOVE_DT_SEC = 0.05
+TOF_FAIL_CONSEC_LIMIT = 3
+TOF_RECOVERY_SLEEP_SEC = 0.25
 # =========================================================
 # Hardware setup constants
 # =========================================================
@@ -105,10 +109,48 @@ def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
 
     cruise_time = distance_m * MOVE_SEC_PER_METER
 
+    # tuning knobs
+    TOF_FAIL_CONSEC_LIMIT = 3
+    TOF_RECOVERY_SLEEP_SEC = 0.25
+    TOF_PRECHECK_RETRY = 3
+
     try:
         _safe_stop(m)
         _sleep_checked(0.2)
 
+        # -------------------------------------------------
+        # Pre-check collision only for forward motion
+        # -------------------------------------------------
+        if forward:
+            tof_fail_count = 0
+
+            for _ in range(TOF_PRECHECK_RETRY):
+                ok_tof, blocked, d_mm, tof_detail = check_blocked(TOF_STOP_THRESHOLD_MM)
+
+                if not ok_tof:
+                    tof_fail_count += 1
+                    time.sleep(MOVE_DT_SEC)
+                    continue
+
+                # valid reading
+                tof_fail_count = 0
+
+                if blocked:
+                    _safe_stop(m)
+                    time.sleep(TOF_RECOVERY_SLEEP_SEC)
+                    return False, f"COLLISION_BLOCKED_AT_START distance_mm={d_mm}"
+
+                # valid and clear → no need to keep prechecking
+                break
+
+            if tof_fail_count >= TOF_FAIL_CONSEC_LIMIT:
+                _safe_stop(m)
+                time.sleep(TOF_RECOVERY_SLEEP_SEC)
+                return False, f"TOF_SENSOR_FAIL {tof_detail}"
+
+        # -------------------------------------------------
+        # Kick phase
+        # -------------------------------------------------
         if forward:
             m.motor_movement([m.M1], m.CCW, MOVE_KICK_SPEED)   # right forward
             m.motor_movement([m.M2], m.CW,  MOVE_KICK_SPEED)   # left forward
@@ -118,14 +160,46 @@ def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
 
         _sleep_checked(MOVE_KICK_TIME_SEC)
 
+        # -------------------------------------------------
+        # Cruise phase
+        # -------------------------------------------------
         if forward:
             m.motor_movement([m.M1], m.CCW, MOVE_CRUISE_SPEED)
             m.motor_movement([m.M2], m.CW,  MOVE_CRUISE_SPEED)
+
+            elapsed = 0.0
+            tof_fail_count = 0
+
+            while elapsed < cruise_time:
+                ok_tof, blocked, d_mm, tof_detail = check_blocked(TOF_STOP_THRESHOLD_MM)
+
+                if not ok_tof:
+                    tof_fail_count += 1
+                    if tof_fail_count >= TOF_FAIL_CONSEC_LIMIT:
+                        _safe_stop(m)
+                        time.sleep(TOF_RECOVERY_SLEEP_SEC)
+                        return False, f"TOF_SENSOR_FAIL {tof_detail}"
+                else:
+                    tof_fail_count = 0
+
+                    if blocked:
+                        _safe_stop(m)
+                        time.sleep(TOF_RECOVERY_SLEEP_SEC)
+                        return False, (
+                            f"COLLISION_STOP_DURING_MOVE "
+                            f"distance_mm={d_mm} elapsed_sec={elapsed:.3f}"
+                        )
+
+                step = min(MOVE_DT_SEC, cruise_time - elapsed)
+                time.sleep(step)
+                elapsed += step
+
         else:
+            # backward unchanged for now (no rear sensor yet)
             m.motor_movement([m.M1], m.CW,  MOVE_CRUISE_SPEED)
             m.motor_movement([m.M2], m.CCW, MOVE_CRUISE_SPEED)
+            _sleep_checked(cruise_time)
 
-        _sleep_checked(cruise_time)
         _safe_stop(m)
 
         direction = "forward" if forward else "backward"

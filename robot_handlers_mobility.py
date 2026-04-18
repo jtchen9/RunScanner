@@ -266,13 +266,23 @@ def _execute_turn_move_turn(
         # 2) move
         ok_move, move_detail = _run_move_direction(forward=forward, distance_m=distance_m)
         if not ok_move:
+            if move_detail.startswith("COLLISION_BLOCKED_AT_START"):
+                err_code = "COLLISION_BLOCKED_AT_START"
+            elif move_detail.startswith("COLLISION_STOP_DURING_MOVE"):
+                err_code = "COLLISION_STOP_DURING_MOVE"
+            elif move_detail.startswith("TOF_SENSOR_FAIL"):
+                err_code = "TOF_SENSOR_FAIL"
+            else:
+                err_code = "MOVE_EXEC_FAIL"
+
             _finish_state(
                 exec_status="error",
-                error_code="MOVE_EXEC_FAIL",
+                error_code=err_code,
                 error_detail=move_detail,
                 location_result=None,
             )
             return False, move_detail
+
 
         time.sleep(TURN_MOVE_TURN_GAP_SEC)
 
@@ -388,5 +398,4 @@ def exec_mobility_report_location(args: Dict[str, Any]) -> Tuple[bool, str]:
             location_result=None,
         )
         return False, f"UNEXPECTED_EXCEPTION {e}"
-    
     
