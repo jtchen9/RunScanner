@@ -5,7 +5,7 @@ import subprocess
 from typing import Dict, Any, Tuple, Optional
 
 import requests
-
+from config import get_ax210_iface
 
 def write_last_register(
     last_register_file,
@@ -43,60 +43,41 @@ def write_last_register(
     except Exception:
         pass
 
-def get_ip_best_effort() -> str:
+def _get_ipv4_of_iface(iface: str) -> str:
     """
-    Best-effort LAN IP discovery for robot registration.
-
-    Preference order:
-      1) wlan1
-      2) wlan0
-
-    Returns empty string if neither interface has a usable IPv4.
+    Return the first non-loopback IPv4 of iface, else "".
     """
-    import subprocess
-
-    for iface in ("wlan1", "wlan0"):
-        try:
-            out = subprocess.check_output(
-                [
-                    "bash",
-                    "-lc",
-                    f"ip -4 addr show dev {iface} | awk '/inet / {{print $2}}' | cut -d/ -f1 | head -n 1",
-                ],
-                text=True,
-            ).strip()
-            if out and not out.startswith("127."):
-                return out
-        except Exception:
-            pass
-
+    try:
+        out = subprocess.check_output(
+            [
+                "bash",
+                "-lc",
+                f"ip -4 addr show dev {iface} | awk '/inet / {{print $2}}' | cut -d/ -f1 | head -n 1",
+            ],
+            text=True,
+        ).strip()
+        if out and not out.startswith("127."):
+            return out
+    except Exception:
+        pass
     return ""
 
-# def get_ip_best_effort() -> str:
-#     """
-#     Best-effort local IP discovery.
-#     Returns empty string if not available.
-#     """
-#     # 1) hostname -> IP (may be 127.x)
-#     try:
-#         ip = socket.gethostbyname(socket.gethostname())
-#         if ip and not ip.startswith("127."):
-#             return ip
-#     except Exception:
-#         pass
 
-#     # 2) routing-based
-#     try:
-#         out = subprocess.check_output(
-#             ["bash", "-lc", "ip route get 1.1.1.1 | awk '{print $7; exit}'"],
-#             text=True,
-#         ).strip()
-#         if out and not out.startswith("127."):
-#             return out
-#     except Exception:
-#         pass
+def get_ip_best_effort() -> str:
+    """
+    IP reported to NMS for reverse-direction iperf3 traffic.
 
-#     return ""
+    Policy:
+      1) Prefer AX210 interface (iwlwifi)
+      2) If AX210 exists but has no IPv4 yet, return ""
+      3) Do NOT fall back to wlan0, because wlan0 is control plane
+         and must not be advertised as iperf3 data-plane IP
+    """
+    ax_iface = get_ax210_iface()
+    if not ax_iface:
+        return ""
+
+    return _get_ipv4_of_iface(ax_iface)
 
 
 def perform_registration(

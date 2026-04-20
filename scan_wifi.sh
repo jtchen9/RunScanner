@@ -7,7 +7,29 @@ exec 9>"/opt/_RunScanner/.cache/scanner-poller.lock" || exit 1
 flock -n 9 || { echo "Another scanner-poller instance is running; exiting."; exit 0; }
 # -----------------------------
 
-IFACE="${IFACE:-wlan0}"
+get_ax210_iface() {
+  for iface in /sys/class/net/*; do
+    iface="$(basename "$iface")"
+    [[ "$iface" == "lo" || "$iface" == "wlan0" ]] && continue
+
+    driver_link="/sys/class/net/$iface/device/driver"
+    if [[ -L "$driver_link" ]]; then
+      target="$(readlink -f "$driver_link" || true)"
+      if [[ "$target" == *"/iwlwifi" ]]; then
+        echo "$iface"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+IFACE="${IFACE:-$(get_ax210_iface || true)}"
+if [[ -z "${IFACE:-}" ]]; then
+  echo "AX210 interface not found"
+  exit 1
+fi
+
 OUT_CSV="/tmp/latest_scan.csv"
 OUT_JSON="/tmp/latest_scan.json"
 MODE="${1:-once}"

@@ -25,7 +25,7 @@ NMS_TIMEOUT_SEC = 10  # Increased from 2 to 10 for slow NMS responses
 NMS_PORT = 8000
 
 # Final-resort fixed NMS address for the new routed architecture
-# FIXED_NMS_BASE = f"http://10.167.247.65:{NMS_PORT}"
+# FIXED_NMS_BASE = f"http://10.82.38.65:{NMS_PORT}"
 FIXED_NMS_BASE = f"http://192.168.11.51:{NMS_PORT}"
 
 # ------------------------------------------------------------------
@@ -211,6 +211,28 @@ def get_reg_iface() -> str:
         pass
 
     return "wlan0"
+
+
+def get_ax210_iface() -> str:
+    """
+    Detect AX210 interface via iwlwifi driver.
+    Returns interface name or "" if not found.
+    """
+    try:
+        import os
+        for iface in os.listdir("/sys/class/net"):
+            if iface in ("lo", "wlan0"):
+                continue
+
+            driver_link = f"/sys/class/net/{iface}/device/driver"
+            if os.path.islink(driver_link):
+                target = os.path.realpath(driver_link)
+                if target.endswith("iwlwifi"):
+                    return iface
+    except Exception:
+        pass
+
+    return ""
 
 
 def get_mac_address() -> str:

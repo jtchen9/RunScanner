@@ -8,7 +8,6 @@ Wants=network-online.target
 Type=simple
 User=pi
 Group=pi
-Environment=IFACE=wlan0
 ExecStart=/opt/_RunScanner/scan_wifi.sh loop
 WorkingDirectory=/opt/_RunScanner
 Restart=always
