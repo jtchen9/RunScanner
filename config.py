@@ -188,25 +188,26 @@ LAST_REGISTER_FILE = BASE_DIR / "last_register.json"
 
 def get_reg_iface() -> str:
     """
-    Select the interface used for registration MAC.
-
-    Rules:
-    1) Use 'wan' if it exists (real AP)
-    2) Otherwise use 'wlan0' if it exists (robot)
-    3) Otherwise fall back to the first non-loopback interface
+    Select control interface (non-AX210 Wi-Fi).
     """
     try:
-        if Path("/sys/class/net/wan").exists():
-            return "wan"
+        import os
 
-        if Path("/sys/class/net/wlan0").exists():
-            return "wlan0"
+        for iface in os.listdir("/sys/class/net"):
+            if iface == "lo":
+                continue
 
-        net_path = Path("/sys/class/net")
-        for iface in net_path.iterdir():
-            name = iface.name
-            if name != "lo":
-                return name
+            driver_link = f"/sys/class/net/{iface}/device/driver"
+            if os.path.islink(driver_link):
+                target = os.path.realpath(driver_link)
+
+                # Skip AX210 (iwlwifi)
+                if target.endswith("iwlwifi"):
+                    continue
+
+                # Pick first non-AX210 Wi-Fi
+                if iface.startswith("wlan") or iface.startswith("wl"):
+                    return iface
     except Exception:
         pass
 
