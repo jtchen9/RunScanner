@@ -48,7 +48,7 @@ PY
 # IMPORTANT: do NOT auto-select pulse/pipewire here.
 exec /usr/bin/mpv \
   --ao=alsa \
-  --audio-device=alsa/default \
+  --audio-device=alsa/sysdefault:CARD=vc4hdmi1 \
   --no-video \
   --volume="$MPV_VOL" \
   "$OUT" >/dev/null 2>&1

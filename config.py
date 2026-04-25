@@ -187,29 +187,21 @@ SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"
 LAST_REGISTER_FILE = BASE_DIR / "last_register.json"
 
 def get_reg_iface() -> str:
-    """
-    Select control interface (non-AX210 Wi-Fi).
-    """
-    try:
-        import os
+    from pathlib import Path
+    import os
 
-        for iface in os.listdir("/sys/class/net"):
-            if iface == "lo":
-                continue
+    if Path("/sys/class/net/wan").exists():
+        return "wan"
 
-            driver_link = f"/sys/class/net/{iface}/device/driver"
-            if os.path.islink(driver_link):
-                target = os.path.realpath(driver_link)
-
-                # Skip AX210 (iwlwifi)
-                if target.endswith("iwlwifi"):
-                    continue
-
-                # Pick first non-AX210 Wi-Fi
-                if iface.startswith("wlan") or iface.startswith("wl"):
-                    return iface
-    except Exception:
-        pass
+    for iface in os.listdir("/sys/class/net"):
+        if iface == "lo" or "." in iface:
+            continue
+        driver_link = f"/sys/class/net/{iface}/device/driver"
+        target = os.path.realpath(driver_link) if os.path.islink(driver_link) else ""
+        if target.endswith("iwlwifi"):
+            continue
+        if iface.startswith("wlan") or iface.startswith("wl"):
+            return iface
 
     return "wlan0"
 

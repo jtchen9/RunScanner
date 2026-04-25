@@ -196,7 +196,7 @@ def play_test_beep():
     play_cmd = [
         "mpv",
         "--ao=alsa",
-        "--audio-device=alsa/default",
+        "--audio-device=alsa/sysdefault:CARD=vc4hdmi1",
         "--no-video",
         tmp_wav
     ]
