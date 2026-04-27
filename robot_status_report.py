@@ -49,6 +49,7 @@ def wifi_freq_to_channel(freq_mhz: int) -> Optional[int]:
 def get_wifi_status(iface: str = "wlan0") -> Dict[str, Any]:
     status: Dict[str, Any] = {
         "iface": iface,
+        "iface_mac": get_iface_mac(iface),
         "connected": False,
         "assoc_bssid": "",
         "ssid": "",
@@ -130,15 +131,19 @@ def get_voice_status() -> Dict[str, Any]:
 def build_status_report() -> Dict[str, Any]:
     iface = detect_active_wifi_iface()
 
-    wifi_status = get_wifi_status(iface) if iface else {
-        "iface": "",
-        "connected": False,
-        "assoc_bssid": "",
-        "ssid": "",
-        "freq_mhz": None,
-        "channel": None,
-        "band": "",
-    }
+    if iface:
+        wifi_status = get_wifi_status(iface)
+    else:
+        wifi_status = {
+            "iface": "",
+            "iface_mac": "",
+            "connected": False,
+            "assoc_bssid": "",
+            "ssid": "",
+            "freq_mhz": None,
+            "channel": None,
+            "band": "",
+        }
 
     return {
         "wifi_status": wifi_status,
@@ -174,3 +179,11 @@ def detect_active_wifi_iface() -> Optional[str]:
 
     return None
 
+
+def get_iface_mac(iface: str) -> str:
+    try:
+        p = Path(f"/sys/class/net/{iface}/address")
+        return p.read_text(encoding="utf-8").strip().lower()
+    except Exception:
+        return ""
+    

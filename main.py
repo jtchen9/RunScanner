@@ -11,6 +11,7 @@ from config import get_bundle_version
 import shutil
 from config import BASE_DIR, SYSTEMCTL, SUDO, SERVICE_SCANNER_POLLER
 from voice.voice_llm import llm_runtime_ready
+from robot_status_report import build_status_report
 
 REGISTER_PY = BASE_DIR / "register.py"
 SCANNER_NAME_FILE = BASE_DIR / "scanner_name.txt"
@@ -497,11 +498,28 @@ def function01():
     # Re-run AV readiness probe and show it
     rep = av_runtime_ready_probe()
     show_status(rep, log=True)
-
 def function02():
     def worker():
-        ok, detail = llm_runtime_ready("Say 'LLM OK' in two words.")
-        root.after(0, lambda: show_status(f"LOCAL.LLM.RUNTIME.READY\n{detail}", log=True))
+        try:
+            status = build_status_report()
+            wifi = status.get("wifi_status", {})
+
+            msg = (
+                "WIFI STATUS\n"
+                f"iface: {wifi.get('iface', '')}\n"
+                f"iface_mac: {wifi.get('iface_mac', '')}\n"
+                f"connected: {wifi.get('connected', False)}\n"
+                f"assoc_bssid: {wifi.get('assoc_bssid', '')}\n"
+                f"ssid: {wifi.get('ssid', '')}\n"
+                f"freq_mhz: {wifi.get('freq_mhz', '')}\n"
+                f"channel: {wifi.get('channel', '')}\n"
+                f"band: {wifi.get('band', '')}"
+            )
+        except Exception as e:
+            msg = f"WIFI STATUS\nERROR: {type(e).__name__}: {e}"
+
+        root.after(0, lambda: show_status(msg, log=True))
+
     threading.Thread(target=worker, daemon=True).start()
 
 def function03():
@@ -642,7 +660,7 @@ button00.grid(row=0, column=0, sticky="EWNS")
 button01 = ttk.Button(root, text="AV Readiness", command=function01)
 button01.grid(row=0, column=1, sticky="EWNS")
 
-button02 = ttk.Button(root, text="LLM Status", command=function02)
+button02 = ttk.Button(root, text="Wi-Fi Status", command=function02)
 button02.grid(row=0, column=2, sticky="EWNS")
 
 button03 = ttk.Button(root, text="Show Log", command=function03)
