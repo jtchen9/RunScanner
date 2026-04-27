@@ -12,35 +12,36 @@ def fetch_commands(
     http_timeout_sec: int,
     av_streaming: Optional[int] = None,
     mobility_report: Optional[Dict[str, Any]] = None,
+    status_report: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
     """
-    Poll NMS for due commands.
+    Poll NMS for due commands using POST.
 
-    Returns:
-      (ok, payload)
-    where:
-      - ok=False means network / HTTP / parse failure
-      - ok=True means payload is the parsed JSON response from NMS
+    Body:
+      {
+        "limit": int,
+        "av_streaming": 0/1,
+        "status_report": {...} | null,
+        "mobility_report": {...} | null
+      }
     """
     url = f"{nms_base}/cmd/poll/{scanner}"
 
-    params: Dict[str, Any] = {
+    body: Dict[str, Any] = {
         "limit": poll_limit,
+        "av_streaming": av_streaming,
+        "status_report": status_report,
+        "mobility_report": mobility_report,
     }
-    if av_streaming is not None:
-        params["av_streaming"] = av_streaming
-
-    if mobility_report:
-        params["mobility_report_json"] = json.dumps(mobility_report, ensure_ascii=False)
 
     try:
-        r = requests.get(url, params=params, timeout=http_timeout_sec)
+        r = requests.post(url, json=body, timeout=http_timeout_sec)
         if r.status_code != 200:
             return False, {"error": f"http {r.status_code}", "text": r.text[:200]}
         return True, r.json()
     except Exception as e:
         return False, {"error": f"exception {type(e).__name__}", "detail": str(e)[:200]}
-
+    
 
 def ack_command(
     nms_base: str,

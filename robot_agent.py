@@ -15,7 +15,7 @@ from robot_agent_handlers import (
     get_mobility_report_payload,
     mark_mobility_report_sent,
 )
-
+from robot_status_report import build_status_report
 from config import (
     BASE_DIR,
     get_nms_base,
@@ -87,6 +87,7 @@ def main() -> None:
             continue
 
         mobility_report = get_mobility_report_payload()
+        status_report = build_status_report()
 
         ok, payload = fetch_commands(
             nms_base=nms_base,
@@ -95,6 +96,7 @@ def main() -> None:
             http_timeout_sec=HTTP_TIMEOUT_SEC,
             av_streaming=get_av_streaming_flag(),
             mobility_report=mobility_report,
+            status_report=status_report,
         )
         if not ok:
             log(f"poll fail scanner={scanner} via={nms_base} {payload}")

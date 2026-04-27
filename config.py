@@ -25,7 +25,7 @@ NMS_TIMEOUT_SEC = 10  # Increased from 2 to 10 for slow NMS responses
 NMS_PORT = 8000
 
 # Final-resort fixed NMS address for the new routed architecture
-# FIXED_NMS_BASE = f"http://10.82.38.65:{NMS_PORT}"
+# FIXED_NMS_BASE = f"http://10.145.49.65:{NMS_PORT}"
 FIXED_NMS_BASE = f"http://192.168.11.51:{NMS_PORT}"
 
 # ------------------------------------------------------------------
