@@ -1,0 +1,26 @@
+Hostname:
+cat /proc/sys/kernel/hostname
+
+Mac: 
+cat /sys/class/net/wan/address
+
+dhcp leases:
+cat /tmp/dhcp.leases
+
+network configuration: 
+cat /etc/config/network
+cat /etc/config/wireless
+cat /etc/config/dhcp
+
+
+=======================
+Upgrade an AP:
+
+At PC side:
+scp -O ./prplos-ipq95xx-generic-wnc_lrg1-squashfs-sysupgrade.bin 192.168.11.1:/tmp/
+
+ssh root@ 192.168.11.1
+cd /tmp
+sysupgrade ./prplos-ipq95xx-generic-wnc_lrg1-squashfs-sysupgrade.bin
+firstboot -y
+reboot
