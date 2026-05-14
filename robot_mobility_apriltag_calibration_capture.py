@@ -106,6 +106,12 @@ def main():
         action="store_true",
         help="Brief output mode",
     )
+    ap.add_argument(
+        "-y",
+        "--yaw",
+        action="store_true",
+        help="Yaw calibration output mode",
+    )
     args = ap.parse_args()
 
     result = {
@@ -127,8 +133,54 @@ def main():
             if not ok:
                 result["error"] = f"av_stop_failed: {err or out}"
 
+                # ---------------------------------------------------------
+                # Brief output mode
+                # ---------------------------------------------------------
                 if args.brief:
-                    print(result["error"])
+                    tags = result["apriltag"].get("tags", [])
+
+                    if not tags:
+                        print("no_tags_detected")
+                    else:
+                        for t in tags:
+                            lp = t.get("library_pose", {})
+
+                            print(
+                                f"tag={t.get('id')} "
+                                f"dist={lp.get('distance_m'):.3f}m "
+                                f"angle={lp.get('angle_deg'):.2f} "
+                                f"yaw={lp.get('yaw_deg'):.2f}"
+                            )
+
+                # ---------------------------------------------------------
+                # Yaw calibration mode
+                # ---------------------------------------------------------
+                elif args.yaw:
+                    tags = result["apriltag"].get("tags", [])
+
+                    if not tags:
+                        print("no_tags_detected")
+                    else:
+                        for t in tags:
+                            lp = t.get("library_pose", {})
+                            ig = t.get("image_geometry", {})
+
+                            print(
+                                f"tag={t.get('id')} "
+                                f"dist={lp.get('distance_m'):.3f} "
+                                f"angle={lp.get('angle_deg'):.2f} "
+                                f"yaw={lp.get('yaw_deg'):.2f} "
+                                f"cx={ig.get('center_x'):.1f} "
+                                f"cy={ig.get('center_y'):.1f} "
+                                f"w={ig.get('avg_width_px'):.1f} "
+                                f"h={ig.get('avg_height_px'):.1f} "
+                                f"wh={ig.get('width_height_ratio'):.3f} "
+                                f"skew={ig.get('perspective_skew_lr'):.3f}"
+                            )
+
+                # ---------------------------------------------------------
+                # Full JSON mode
+                # ---------------------------------------------------------
                 else:
                     print(json.dumps(result, ensure_ascii=False, indent=2))
 
@@ -180,12 +232,36 @@ def main():
         else:
             for t in tags:
                 lp = t.get("library_pose", {})
-
                 print(
                     f"tag={t.get('id')} "
                     f"dist={lp.get('distance_m'):.3f}m "
                     f"angle={lp.get('angle_deg'):.2f} "
                     f"yaw={lp.get('yaw_deg'):.2f}"
+                )
+
+    # ---------------------------------------------------------
+    # Yaw calibration output mode
+    # ---------------------------------------------------------
+    elif args.yaw:
+        tags = result["apriltag"].get("tags", [])
+
+        if not tags:
+            print("no_tags_detected")
+        else:
+            for t in tags:
+                lp = t.get("library_pose", {})
+                ig = t.get("image_geometry", {})
+                print(
+                    f"tag={t.get('id')} "
+                    f"dist={lp.get('distance_m'):.3f} "
+                    f"angle={lp.get('angle_deg'):.2f} "
+                    f"yaw={lp.get('yaw_deg'):.2f} "
+                    f"cx={ig.get('center_x'):.1f} "
+                    f"cy={ig.get('center_y'):.1f} "
+                    f"w={ig.get('avg_width_px'):.1f} "
+                    f"h={ig.get('avg_height_px'):.1f} "
+                    f"wh={ig.get('width_height_ratio'):.3f} "
+                    f"skew={ig.get('perspective_skew_lr'):.3f}"
                 )
 
     # ---------------------------------------------------------
