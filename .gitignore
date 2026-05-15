@@ -2,3 +2,7 @@ _bundle_build
 __pycache__
 agent.log
 uploader.log
+nms_base.txt
+scanner_name.txt
+*.log
+*.txt
