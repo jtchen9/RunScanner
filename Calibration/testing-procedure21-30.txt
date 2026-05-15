@@ -1,0 +1,30 @@
+echo C1-21 Testing >> 2026-05-15-C1-testing-result(21-30).txt 
+ python3  /opt/_RunScanner/robot_mobility_apriltag_calibration_capture.py -y  >> 2026-05-15-C1-testing-result(21-30).txt 
+
+echo C1-22 Testing >> 2026-05-15-C1-testing-result(21-30).txt 
+ python3  /opt/_RunScanner/robot_mobility_apriltag_calibration_capture.py -y  >> 2026-05-15-C1-testing-result(21-30).txt 
+
+echo C1-23 Testing >> 2026-05-15-C1-testing-result(21-30).txt 
+ python3  /opt/_RunScanner/robot_mobility_apriltag_calibration_capture.py -y  >> 2026-05-15-C1-testing-result(21-30).txt 
+
+echo C1-24 Testing >> 2026-05-15-C1-testing-result(21-30).txt 
+ python3  /opt/_RunScanner/robot_mobility_apriltag_calibration_capture.py -y  >> 2026-05-15-C1-testing-result(21-30).txt 
+
+echo C1-25 Testing >> 2026-05-15-C1-testing-result(21-30).txt 
+ python3  /opt/_RunScanner/robot_mobility_apriltag_calibration_capture.py -y  >> 2026-05-15-C1-testing-result(21-30).txt 
+
+echo C1-26 Testing >> 2026-05-15-C1-testing-result(21-30).txt 
+ python3  /opt/_RunScanner/robot_mobility_apriltag_calibration_capture.py -y  >> 2026-05-15-C1-testing-result(21-30).txt 
+
+echo C1-27 Testing >> 2026-05-15-C1-testing-result(21-30).txt 
+ python3  /opt/_RunScanner/robot_mobility_apriltag_calibration_capture.py -y  >> 2026-05-15-C1-testing-result(21-30).txt 
+
+echo C1-28 Testing >> 2026-05-15-C1-testing-result(21-30).txt 
+ python3  /opt/_RunScanner/robot_mobility_apriltag_calibration_capture.py -y  >> 2026-05-15-C1-testing-result(21-30).txt 
+
+echo C1-29 Testing >> 2026-05-15-C1-testing-result(21-30).txt 
+ python3  /opt/_RunScanner/robot_mobility_apriltag_calibration_capture.py -y  >> 2026-05-15-C1-testing-result(21-30).txt 
+
+echo C1-30 Testing >> 2026-05-15-C1-testing-result(21-30).txt 
+ python3  /opt/_RunScanner/robot_mobility_apriltag_calibration_capture.py -y  >> 2026-05-15-C1-testing-result(21-30).txt 
+
