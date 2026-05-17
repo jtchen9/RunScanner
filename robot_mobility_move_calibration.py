@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# python3 robot_mobility_move_calibration.py --distance 0.4 -b
 import argparse
 import csv
 import json
@@ -165,4 +166,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
