@@ -46,9 +46,9 @@ MOVE_SEC_PER_METER = 10.0 / 1.0
 # =========================================================
 # Turn parameters (gyro-based)
 # =========================================================
-TURN_KICK_SPEED = 45
-TURN_CRUISE_SPEED = 30
-TURN_KICK_TIME_SEC = 0.2
+TURN_KICK_SPEED = 25
+TURN_CRUISE_SPEED = 18
+TURN_KICK_TIME_SEC = 0.05
 TURN_DT = 0.02
 TURN_STOP_MARGIN_DEG = 0.0
 
