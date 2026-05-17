@@ -24,3 +24,20 @@ cd /tmp
 sysupgrade ./prplos-ipq95xx-generic-wnc_lrg1-squashfs-sysupgrade.bin
 firstboot -y
 reboot
+
+========================
+Fix Chrome if broken:
+
+sudo snap revert chromium
+snap remove --purge chromium
+sudo snap install chromium
+-------------
+Double click "PushBookmarks" in 桌面\Utilities
+
+=========================
+System upgrade on Pi:
+
+sudo apt update && sudo apt upgrade -y
+sudo apt autoremove -y && sudo apt clean
+sudo snap refresh
+
