@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 # python3 robot_mobility_move_calibration.py --distance 0.4 -b
+# 
+# To debug:
+# sudo i2cdetect -y 1
+# python3 - << 'PY'
+# from robot_mobility_vl53l1x import read_distance_mm
+# for i in range(10):
+#     print(i, read_distance_mm())
+# PY
+
 import argparse
 import csv
 import json
