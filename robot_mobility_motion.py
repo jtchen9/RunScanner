@@ -121,7 +121,7 @@ def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
         # -------------------------------------------------
         # Pre-check collision only for forward motion
         # -------------------------------------------------
-        if forward:
+        if False and forward:
             tof_fail_count = 0
 
             for _ in range(TOF_PRECHECK_RETRY):
