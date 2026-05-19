@@ -171,24 +171,24 @@ def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
             tof_fail_count = 0
 
             while elapsed < cruise_time:
-                ok_tof, blocked, d_mm, tof_detail = check_blocked(TOF_STOP_THRESHOLD_MM)
+                # ok_tof, blocked, d_mm, tof_detail = check_blocked(TOF_STOP_THRESHOLD_MM)
 
-                if not ok_tof:
-                    tof_fail_count += 1
-                    if tof_fail_count >= TOF_FAIL_CONSEC_LIMIT:
-                        _safe_stop(m)
-                        time.sleep(TOF_RECOVERY_SLEEP_SEC)
-                        return False, f"TOF_SENSOR_FAIL {tof_detail}"
-                else:
-                    tof_fail_count = 0
+                # if not ok_tof:
+                #     tof_fail_count += 1
+                #     if tof_fail_count >= TOF_FAIL_CONSEC_LIMIT:
+                #         _safe_stop(m)
+                #         time.sleep(TOF_RECOVERY_SLEEP_SEC)
+                #         return False, f"TOF_SENSOR_FAIL {tof_detail}"
+                # else:
+                #     tof_fail_count = 0
 
-                    if blocked:
-                        _safe_stop(m)
-                        time.sleep(TOF_RECOVERY_SLEEP_SEC)
-                        return False, (
-                            f"COLLISION_STOP_DURING_MOVE "
-                            f"distance_mm={d_mm} elapsed_sec={elapsed:.3f}"
-                        )
+                #     if blocked:
+                #         _safe_stop(m)
+                #         time.sleep(TOF_RECOVERY_SLEEP_SEC)
+                #         return False, (
+                #             f"COLLISION_STOP_DURING_MOVE "
+                #             f"distance_mm={d_mm} elapsed_sec={elapsed:.3f}"
+                #         )
 
                 step = min(MOVE_DT_SEC, cruise_time - elapsed)
                 time.sleep(step)

@@ -35,6 +35,12 @@ sudo snap install chromium
 Double click "PushBookmarks" in 桌面\Utilities
 
 =========================
+Chromium locked at Pi: 
+
+rm -f ~/snap/chromium/common/chromium/Singleton*
+snap run chromium
+
+=========================
 System upgrade on Pi:
 
 sudo apt update && sudo apt upgrade -y
