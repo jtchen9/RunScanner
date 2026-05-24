@@ -3,5 +3,5 @@
   "port": 8554,
   "transport": "tcp",
   "scanner": "twin-scout-julia",
-  "camera_role": "front"
+  "camera_role": "rear"
 }
