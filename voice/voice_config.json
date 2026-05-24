@@ -22,7 +22,7 @@
     ],
     "stt_engine": "vosk",
     "vosk_model_dir": "/opt/_RunScanner/voice/models/vosk-model-small-en-us-0.15",
-    "mic_dev": "plughw:1,0",
+    "mic_dev": "plughw:CARD=webcamproduct,DEV=0",
     "sample_rate": 16000,
     "channels": 1,
     "chunk_sec": 1,
