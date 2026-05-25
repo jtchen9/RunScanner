@@ -79,23 +79,48 @@ def get_av_streaming_flag() -> int:
 def exec_av_stream_start(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
     _ensure_dir(AV_DIR)
 
+    camera_role = (args.get("camera_role") or "").strip().lower()
+    if camera_role not in ("", "front", "rear"):
+        return False, f"bad camera_role={camera_role}; expected front|rear"
+
+    # Base config, backward compatible with old one-camera runner
     cfg = {
         "server": (args.get("server") or "").strip() or AV_DEFAULT_SERVER,
         "port": int(args.get("port") or AV_DEFAULT_RTSP_PORT),
-        "path": (args.get("path") or "").strip() or scanner,
         "transport": (args.get("transport") or "").strip() or AV_DEFAULT_TRANSPORT,
-        "video_dev": (args.get("video_dev") or "").strip() or AV_DEFAULT_VIDEO_DEV,
-        "audio_dev": (args.get("audio_dev") or "").strip() or AV_DEFAULT_AUDIO_DEV,
-        "size": (args.get("size") or "").strip() or AV_DEFAULT_SIZE,
+        "scanner": scanner,
         "fps": int(args.get("fps") or AV_DEFAULT_FPS),
     }
+
+    if camera_role:
+        # New role-based mode.
+        # av_stream_runner.sh will resolve video/audio/path/codec by camera_role.
+        cfg["camera_role"] = camera_role
+
+        # Optional overrides, normally not needed
+        if args.get("path"):
+            cfg["path"] = str(args.get("path")).strip()
+        if args.get("size"):
+            cfg["size"] = str(args.get("size")).strip()
+        if "audio_enabled" in args:
+            cfg["audio_enabled"] = bool(args.get("audio_enabled"))
+
+    else:
+        # Legacy mode: preserve old behavior exactly
+        cfg.update({
+            "path": (args.get("path") or "").strip() or scanner,
+            "video_dev": (args.get("video_dev") or "").strip() or AV_DEFAULT_VIDEO_DEV,
+            "audio_dev": (args.get("audio_dev") or "").strip() or AV_DEFAULT_AUDIO_DEV,
+            "size": (args.get("size") or "").strip() or AV_DEFAULT_SIZE,
+        })
 
     ok, msg = _write_json(AV_CFG_FILE, cfg)
     if not ok:
         return False, msg
 
-    ok2, out, err = _run_systemctl(["start", SERVICE_AVSTREAM])
-    return (True, f"started {SERVICE_AVSTREAM}") if ok2 else (False, f"start failed: {err or out}")
+    # Restart, not start, so switching front <-> rear takes effect immediately.
+    ok2, out, err = _run_systemctl(["restart", SERVICE_AVSTREAM])
+    return (True, f"started {SERVICE_AVSTREAM} camera_role={camera_role or 'legacy'}") if ok2 else (False, f"start failed: {err or out}")
 
 
 def exec_av_stream_stop() -> Tuple[bool, str]:
