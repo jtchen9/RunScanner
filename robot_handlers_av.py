@@ -79,7 +79,7 @@ def get_av_streaming_flag() -> int:
 def exec_av_stream_start(scanner: str, args: Dict[str, Any]) -> Tuple[bool, str]:
     _ensure_dir(AV_DIR)
 
-    camera_role = (args.get("camera_role") or "").strip().lower()
+    camera_role = (args.get("camera_role") or "front").strip().lower()
     if camera_role not in ("", "front", "rear"):
         return False, f"bad camera_role={camera_role}; expected front|rear"
 
