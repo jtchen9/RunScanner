@@ -131,6 +131,7 @@ def main() -> None:
                 continue
 
             log(f"EXEC cmd_id={cmd_id} action={action} execute_at={execute_at} xid={xid}")
+            log(f"CMD_FIELDS cmd_id={cmd_id} fields={fields}")
 
             if action == "bundle.apply":
                 # Disruptive command: ACK first so NMS will not keep re-issuing it.
