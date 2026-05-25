@@ -16,17 +16,19 @@ DEFAULT_WARMUP_SEC = 1.0
 def capture_snapshot(
     output_path: str,
     camera_index: int = DEFAULT_CAMERA_INDEX,
+    video_dev: str = "",
     width: int = DEFAULT_WIDTH,
     height: int = DEFAULT_HEIGHT,
     warmup_sec: float = DEFAULT_WARMUP_SEC,
 ) -> dict:
     out = Path(output_path)
 
-    cap = cv2.VideoCapture(camera_index)
+    cap_src = video_dev if video_dev else camera_index
+    cap = cv2.VideoCapture(cap_src)
     if not cap.isOpened():
         return {
             "ok": False,
-            "error": f"cannot_open_camera_index_{camera_index}",
+            "error": f"cannot_open_camera_{cap_src}",
             "output_path": str(out),
         }
 
@@ -77,6 +79,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("output_path", help="Path to save snapshot image")
     ap.add_argument("--camera-index", type=int, default=DEFAULT_CAMERA_INDEX)
+    ap.add_argument("--video-dev", default="")    
     ap.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     ap.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     ap.add_argument("--warmup-sec", type=float, default=DEFAULT_WARMUP_SEC)
@@ -85,6 +88,7 @@ def main():
     result = capture_snapshot(
         output_path=args.output_path,
         camera_index=args.camera_index,
+        video_dev=args.video_dev,
         width=args.width,
         height=args.height,
         warmup_sec=args.warmup_sec,

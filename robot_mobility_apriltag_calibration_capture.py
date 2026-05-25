@@ -11,11 +11,12 @@ SNAPSHOT_SCRIPT = "/opt/_RunScanner/robot_mobility_snapshot_capture.py"
 CALIB_APRILTAG_SCRIPT = "/opt/_RunScanner/robot_mobility_apriltag_calibration_pose.py"
 
 SNAPSHOT_PATH = "/tmp/robot_mobility_snapshot.jpg"
+FRONT_VIDEO = "/dev/v4l/by-id/usb-webcamvendor_webcamproduct_YGR80PU1200.23071717-video-index0"
+REAR_VIDEO = "/dev/v4l/by-id/usb-046d_C270_HD_WEBCAM_200901010001-video-index0"
 
 SYSTEMCTL = "/usr/bin/systemctl"
 SUDO = "/usr/bin/sudo"
 PYTHON = "/usr/bin/python3"
-
 
 def run_cmd(cmd, timeout=20):
     cp = subprocess.run(
@@ -47,12 +48,20 @@ def av_start():
     return run_systemctl(["start", AV_SERVICE], timeout=15)
 
 
-def capture_snapshot():
-    rc, out, err = run_cmd([PYTHON, SNAPSHOT_SCRIPT, SNAPSHOT_PATH], timeout=20)
+def capture_snapshot(camera_role: str):
+    video_dev = FRONT_VIDEO if camera_role == "front" else REAR_VIDEO
+
+    rc, out, err = run_cmd(
+        [PYTHON, SNAPSHOT_SCRIPT, SNAPSHOT_PATH, "--video-dev", video_dev],
+        timeout=20,
+    )
+
     if rc != 0:
         return False, {
             "ok": False,
             "stage": "snapshot",
+            "camera_role": camera_role,
+            "video_dev": video_dev,
             "error": err or out or "snapshot_failed",
         }
 
@@ -65,12 +74,16 @@ def capture_snapshot():
         return False, {
             "ok": False,
             "stage": "snapshot",
+            "camera_role": camera_role,
+            "video_dev": video_dev,
             "error": "snapshot_file_missing",
         }
 
     return True, {
         "ok": True,
         "stage": "snapshot",
+        "camera_role": camera_role,
+        "video_dev": video_dev,
         "snapshot_path": SNAPSHOT_PATH,
         "detail": data or out,
     }
@@ -112,11 +125,18 @@ def main():
         action="store_true",
         help="Yaw calibration output mode",
     )
+    ap.add_argument(
+        "--camera-role",
+        choices=["front", "rear"],
+        default="front",
+        help="Camera role for AprilTag capture",
+    )
     args = ap.parse_args()
 
     result = {
         "ok": False,
         "calibration_capture": True,
+        "camera_role": args.camera_role,
         "av_was_active": False,
         "av_restarted": False,
         "snapshot_path": SNAPSHOT_PATH,
@@ -188,7 +208,7 @@ def main():
 
             time.sleep(1.0)
 
-        ok_snap, snap_info = capture_snapshot()
+        ok_snap, snap_info = capture_snapshot(args.camera_role)
         if not ok_snap:
             result["error"] = snap_info.get("error", "snapshot_failed")
             result["apriltag"] = snap_info
