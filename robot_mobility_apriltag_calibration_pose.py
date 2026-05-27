@@ -86,6 +86,25 @@ def analyze_snapshot(
         angle_deg = math.degrees(math.atan2(x, z))
 
         R = np.asarray(r.pose_R)
+        # -------------------------------------------------------------
+        # 2) Raw image geometry from AprilTag corners
+        # -------------------------------------------------------------
+        corners = np.asarray(r.corners, dtype=float)
+
+        # pupil_apriltags usually returns corners in this order:
+        # bottom-left, bottom-right, top-right, top-left
+        c0, c1, c2, c3 = corners
+
+        def px_dist(a, b):
+            return float(np.linalg.norm(a - b))
+
+        edge_bottom_px = px_dist(c0, c1)
+        edge_right_px = px_dist(c1, c2)
+        edge_top_px = px_dist(c2, c3)
+        edge_left_px = px_dist(c3, c0)
+
+        avg_width_px = (edge_top_px + edge_bottom_px) / 2.0
+        avg_height_px = (edge_left_px + edge_right_px) / 2.0
 
         # -------------------------------------------------------------
         # Geometry-based yaw estimate with sign
@@ -106,26 +125,6 @@ def analyze_snapshot(
 
         else:
             yaw_deg = 0.0
-
-        # -------------------------------------------------------------
-        # 2) Raw image geometry from AprilTag corners
-        # -------------------------------------------------------------
-        corners = np.asarray(r.corners, dtype=float)
-
-        # pupil_apriltags usually returns corners in this order:
-        # bottom-left, bottom-right, top-right, top-left
-        c0, c1, c2, c3 = corners
-
-        def px_dist(a, b):
-            return float(np.linalg.norm(a - b))
-
-        edge_bottom_px = px_dist(c0, c1)
-        edge_right_px = px_dist(c1, c2)
-        edge_top_px = px_dist(c2, c3)
-        edge_left_px = px_dist(c3, c0)
-
-        avg_width_px = (edge_top_px + edge_bottom_px) / 2.0
-        avg_height_px = (edge_left_px + edge_right_px) / 2.0
 
         center = np.asarray(r.center, dtype=float)
         center_x = float(center[0])
