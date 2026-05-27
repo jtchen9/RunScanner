@@ -51,10 +51,29 @@ def av_start():
 def capture_snapshot(camera_role: str):
     video_dev = FRONT_VIDEO if camera_role == "front" else REAR_VIDEO
 
-    rc, out, err = run_cmd(
-        [PYTHON, SNAPSHOT_SCRIPT, SNAPSHOT_PATH, "--video-dev", video_dev],
-        timeout=20,
-    )
+    last_err = ""
+    last_out = ""
+
+    for attempt in range(1, 4):
+        rc, out, err = run_cmd(
+            [PYTHON, SNAPSHOT_SCRIPT, SNAPSHOT_PATH, "--video-dev", video_dev],
+            timeout=25,
+        )
+
+        if rc == 0 and Path(SNAPSHOT_PATH).exists():
+            break
+
+        last_err = err
+        last_out = out
+        time.sleep(1.0)
+    else:
+        return False, {
+            "ok": False,
+            "stage": "snapshot",
+            "camera_role": camera_role,
+            "video_dev": video_dev,
+            "error": last_err or last_out or "snapshot_failed_after_retries",
+        }
 
     if rc != 0:
         return False, {
@@ -206,7 +225,7 @@ def main():
 
                 raise SystemExit(1)
 
-            time.sleep(1.0)
+            time.sleep(3.0)
 
         ok_snap, snap_info = capture_snapshot(args.camera_role)
         if not ok_snap:
@@ -240,6 +259,7 @@ def main():
         if av_was_active:
             ok, out, err = av_start()
             result["av_restarted"] = ok
+            time.sleep(1.0)
 
     # ---------------------------------------------------------
     # Brief output mode
