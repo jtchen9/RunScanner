@@ -86,7 +86,26 @@ def analyze_snapshot(
         angle_deg = math.degrees(math.atan2(x, z))
 
         R = np.asarray(r.pose_R)
-        yaw_deg = rotation_matrix_to_yaw_deg(R)
+
+        # -------------------------------------------------------------
+        # Geometry-based yaw estimate with sign
+        # -------------------------------------------------------------
+        if avg_height_px > 0:
+            ratio = avg_width_px / avg_height_px
+            ratio = max(min(ratio, 1.0), -1.0)
+
+            yaw_abs_deg = math.degrees(math.acos(ratio))
+
+            # Sign from perspective asymmetry:
+            # right edge shorter  -> positive yaw
+            # left edge shorter   -> negative yaw
+            if edge_right_px < edge_left_px:
+                yaw_deg = yaw_abs_deg
+            else:
+                yaw_deg = -yaw_abs_deg
+
+        else:
+            yaw_deg = 0.0
 
         # -------------------------------------------------------------
         # 2) Raw image geometry from AprilTag corners

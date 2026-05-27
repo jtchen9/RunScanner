@@ -1,4 +1,5 @@
 # /etc/systemd/system/scanner-agent.service
+# sudo systemctl restart scanner-agent.service
 [Unit]
 Description=Scanner agent (Pi polls NMS commands and ACKs)
 After=network-online.target
