@@ -86,7 +86,7 @@ def analyze_snapshot(
         angle_deg = math.degrees(math.atan2(x, z))
 
         R = np.asarray(r.pose_R)
-        yaw_deg = rotation_matrix_to_yaw_deg(R)
+        # yaw_deg = rotation_matrix_to_yaw_deg(R)
         
         # -------------------------------------------------------------
         # 2) Raw image geometry from AprilTag corners
@@ -108,29 +108,29 @@ def analyze_snapshot(
         avg_width_px = (edge_top_px + edge_bottom_px) / 2.0
         avg_height_px = (edge_left_px + edge_right_px) / 2.0
 
-        # # -------------------------------------------------------------
-        # # Geometry-based yaw estimate with sign
-        # # -------------------------------------------------------------
-        # if avg_height_px > 0:
-        #     ratio = avg_width_px / avg_height_px
-        #     ratio = max(min(ratio, 1.0), -1.0)
+        # -------------------------------------------------------------
+        # Geometry-based yaw estimate with sign
+        # -------------------------------------------------------------
+        if avg_height_px > 0:
+            ratio = avg_width_px / avg_height_px
+            ratio = max(min(ratio, 1.0), -1.0)
 
-        #     yaw_abs_deg = math.degrees(math.acos(ratio))
-        #     # Treat tiny width/height mismatch as frontal.
-        #     # This avoids false 5-12 degree yaw near true yaw = 0.
-        #     if yaw_abs_deg < 12.0:
-        #         yaw_abs_deg = 0.0
+            yaw_abs_deg = math.degrees(math.acos(ratio))
+            # Treat tiny width/height mismatch as frontal.
+            # This avoids false 5-12 degree yaw near true yaw = 0.
+            if yaw_abs_deg < 12.0:
+                yaw_abs_deg = 0.0
 
-        #     # Sign from perspective asymmetry:
-        #     # right edge shorter  -> positive yaw
-        #     # left edge shorter   -> negative yaw
-        #     if edge_right_px < edge_left_px:
-        #         yaw_deg = yaw_abs_deg
-        #     else:
-        #         yaw_deg = -yaw_abs_deg
+            # Sign from perspective asymmetry:
+            # right edge shorter  -> positive yaw
+            # left edge shorter   -> negative yaw
+            if edge_right_px < edge_left_px:
+                yaw_deg = yaw_abs_deg
+            else:
+                yaw_deg = -yaw_abs_deg
 
-        # else:
-        #     yaw_deg = 0.0
+        else:
+            yaw_deg = 0.0
 
         center = np.asarray(r.center, dtype=float)
         center_x = float(center[0])
