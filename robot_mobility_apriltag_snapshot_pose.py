@@ -13,8 +13,8 @@ from pupil_apriltags import Detector
 # Starter camera calibration for Logitech C270 at 640x480
 # Replace later with calibrated values when available.
 # ---------------------------------------------------------------------
-FX = 554.0
-FY = 554.0
+FX = 857.2
+FY = 851.8
 CX = 640.0
 CY = 360.0
 TAG_SIZE_M = 0.10   # 10 cm x 10 cm
