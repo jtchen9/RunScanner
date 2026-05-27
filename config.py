@@ -265,3 +265,52 @@ AV_DEFAULT_FPS = 30
 
 # Logging (if runner/service writes logs here)
 AV_LOG_FILE = AV_DIR / "av_stream.log"
+
+
+# ------------------------------------------------------------------
+# Camera roles / AprilTag calibration profiles
+# ------------------------------------------------------------------
+# Single source of truth for front/rear camera device and AprilTag intrinsics.
+# Front = new 108-degree 2K webcam, captured at 1280x720.
+# Rear  = Logitech C270, captured at 640x480.
+CAMERA_ROLE_FRONT = "front"
+CAMERA_ROLE_REAR = "rear"
+
+CAMERA_FRONT_VIDEO_DEV = "/dev/v4l/by-id/usb-webcamvendor_webcamproduct_YGR80PU1200.23071717-video-index0"
+CAMERA_REAR_VIDEO_DEV = "/dev/v4l/by-id/usb-046d_C270_HD_WEBCAM_200901010001-video-index0"
+
+APRILTAG_CAMERA_PROFILES = {
+    CAMERA_ROLE_FRONT: {
+        "camera_role": CAMERA_ROLE_FRONT,
+        "video_dev": CAMERA_FRONT_VIDEO_DEV,
+        "width": 1280,
+        "height": 720,
+        "fx": 857.2,
+        "fy": 851.8,
+        "cx": 640.0,
+        "cy": 360.0,
+        "tag_size_m": 0.10,
+    },
+    CAMERA_ROLE_REAR: {
+        "camera_role": CAMERA_ROLE_REAR,
+        "video_dev": CAMERA_REAR_VIDEO_DEV,
+        "width": 640,
+        "height": 480,
+        "fx": 554.0,
+        "fy": 554.0,
+        "cx": 320.0,
+        "cy": 240.0,
+        "tag_size_m": 0.10,
+    },
+}
+
+def get_apriltag_camera_profile(camera_role: str = CAMERA_ROLE_FRONT) -> dict:
+    """
+    Return AprilTag/camera profile for a named camera role.
+    Defaults to front camera to match the current navigation-primary camera.
+    """
+    role = (camera_role or CAMERA_ROLE_FRONT).strip().lower()
+    if role not in APRILTAG_CAMERA_PROFILES:
+        raise ValueError(f"bad camera_role={camera_role}; expected front|rear")
+    return APRILTAG_CAMERA_PROFILES[role].copy()
+

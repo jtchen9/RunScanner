@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import argparse
 import json
 import math
 import sys
@@ -9,69 +8,36 @@ import cv2
 import numpy as np
 from pupil_apriltags import Detector
 
-from config import get_apriltag_camera_profile
+
+# ---------------------------------------------------------------------
+# Starter camera calibration for Logitech C270 at 640x480
+# Replace later with calibrated values when available.
+# ---------------------------------------------------------------------
+FX = 857.2
+FY = 851.8
+CX = 640.0
+CY = 360.0
+TAG_SIZE_M = 0.10   # 10 cm x 10 cm
 
 
 def rotation_matrix_to_yaw_deg(R: np.ndarray) -> float:
     """
-    Legacy library yaw extraction.
-    Kept for comparison/debugging, but calibration output uses geometry yaw.
+    Extract yaw angle in degrees from rotation matrix.
+    We only care about the horizontal-plane orientation.
     """
+    # Standard yaw extraction from rotation matrix
     yaw_rad = math.atan2(R[1, 0], R[0, 0])
     return math.degrees(yaw_rad)
 
 
-def geometry_yaw_deg(
-    avg_width_px: float,
-    avg_height_px: float,
-    edge_left_px: float,
-    edge_right_px: float,
-) -> float:
-    """
-    Geometry-based tag yaw estimate.
-
-    Magnitude:
-      tag yaw compresses apparent tag width.
-      yaw_abs ~= acos(avg_width_px / avg_height_px)
-
-    Sign:
-      uses left/right edge asymmetry. Keep this as a convention; if later
-      ground-truth convention is opposite, flip globally after calibration.
-    """
-    if avg_height_px <= 0:
-        return 0.0
-
-    ratio = avg_width_px / avg_height_px
-    ratio = max(min(ratio, 1.0), -1.0)
-
-    yaw_abs_deg = math.degrees(math.acos(ratio))
-
-    # Avoid false yaw when tag is almost frontal.
-    if yaw_abs_deg < 12.0:
-        yaw_abs_deg = 0.0
-
-    if edge_right_px < edge_left_px:
-        return yaw_abs_deg
-    return -yaw_abs_deg
-
-
 def analyze_snapshot(
     image_path: str,
-    camera_role: str = "front",
-    fx: float | None = None,
-    fy: float | None = None,
-    cx: float | None = None,
-    cy: float | None = None,
-    tag_size_m: float | None = None,
+    fx: float = FX,
+    fy: float = FY,
+    cx: float = CX,
+    cy: float = CY,
+    tag_size_m: float = TAG_SIZE_M,
 ) -> dict:
-    profile = get_apriltag_camera_profile(camera_role)
-
-    fx = float(profile["fx"] if fx is None else fx)
-    fy = float(profile["fy"] if fy is None else fy)
-    cx = float(profile["cx"] if cx is None else cx)
-    cy = float(profile["cy"] if cy is None else cy)
-    tag_size_m = float(profile["tag_size_m"] if tag_size_m is None else tag_size_m)
-
     p = Path(image_path)
     if not p.exists():
         return {
@@ -79,7 +45,6 @@ def analyze_snapshot(
             "error": f"image_not_found: {image_path}",
             "count": 0,
             "tags": [],
-            "camera_role": camera_role,
         }
 
     img = cv2.imread(str(p))
@@ -89,7 +54,6 @@ def analyze_snapshot(
             "error": f"image_load_failed: {image_path}",
             "count": 0,
             "tags": [],
-            "camera_role": camera_role,
         }
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -113,7 +77,7 @@ def analyze_snapshot(
     tags = []
     for r in results:
         # -------------------------------------------------------------
-        # 1) Library pose estimate: distance and camera bearing
+        # 1) Existing library pose estimate
         # -------------------------------------------------------------
         t = np.asarray(r.pose_t).reshape(-1)
         x, y, z = float(t[0]), float(t[1]), float(t[2])
@@ -122,8 +86,8 @@ def analyze_snapshot(
         angle_deg = math.degrees(math.atan2(x, z))
 
         R = np.asarray(r.pose_R)
-        library_yaw_deg = rotation_matrix_to_yaw_deg(R)
-
+        # yaw_deg = rotation_matrix_to_yaw_deg(R)
+        
         # -------------------------------------------------------------
         # 2) Raw image geometry from AprilTag corners
         # -------------------------------------------------------------
@@ -144,12 +108,29 @@ def analyze_snapshot(
         avg_width_px = (edge_top_px + edge_bottom_px) / 2.0
         avg_height_px = (edge_left_px + edge_right_px) / 2.0
 
-        yaw_deg = geometry_yaw_deg(
-            avg_width_px=avg_width_px,
-            avg_height_px=avg_height_px,
-            edge_left_px=edge_left_px,
-            edge_right_px=edge_right_px,
-        )
+        # -------------------------------------------------------------
+        # Geometry-based yaw estimate with sign
+        # -------------------------------------------------------------
+        if avg_height_px > 0:
+            ratio = avg_width_px / avg_height_px
+            ratio = max(min(ratio, 1.0), -1.0)
+
+            yaw_abs_deg = math.degrees(math.acos(ratio))
+            # Treat tiny width/height mismatch as frontal.
+            # This avoids false 5-12 degree yaw near true yaw = 0.
+            if yaw_abs_deg < 12.0:
+                yaw_abs_deg = 0.0
+
+            # Sign from perspective asymmetry:
+            # right edge shorter  -> positive yaw
+            # left edge shorter   -> negative yaw
+            if edge_right_px < edge_left_px:
+                yaw_deg = yaw_abs_deg
+            else:
+                yaw_deg = -yaw_abs_deg
+
+        else:
+            yaw_deg = 0.0
 
         center = np.asarray(r.center, dtype=float)
         center_x = float(center[0])
@@ -176,6 +157,9 @@ def analyze_snapshot(
             else None
         )
 
+        # -------------------------------------------------------------
+        # 3) Output both library pose and calibration geometry
+        # -------------------------------------------------------------
         tags.append({
             "id": int(r.tag_id),
 
@@ -183,7 +167,6 @@ def analyze_snapshot(
                 "distance_m": round(distance_m, 4),
                 "angle_deg": round(angle_deg, 4),
                 "yaw_deg": round(yaw_deg, 4),
-                "library_yaw_raw_deg": round(library_yaw_deg, 4),
             },
 
             "image_geometry": {
@@ -227,9 +210,6 @@ def analyze_snapshot(
         "ok": True,
         "error": "",
         "image_path": str(p),
-        "camera_role": camera_role,
-        "image_width": int(img.shape[1]),
-        "image_height": int(img.shape[0]),
         "count": len(tags),
         "tags": tags,
         "camera_params": {
@@ -243,22 +223,26 @@ def analyze_snapshot(
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("image_path", help="Snapshot image path")
-    ap.add_argument(
-        "--camera-role",
-        choices=["front", "rear"],
-        default="front",
-        help="Camera profile to use for AprilTag pose",
-    )
-    args = ap.parse_args()
+    if len(sys.argv) < 2:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "usage: apriltag_snapshot_pose.py IMAGE_PATH",
+                    "count": 0,
+                    "tags": [],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        raise SystemExit(2)
 
-    out = analyze_snapshot(
-        image_path=args.image_path,
-        camera_role=args.camera_role,
-    )
+    image_path = sys.argv[1]
+    out = analyze_snapshot(image_path=image_path)
     print(json.dumps(out, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
     main()
+    
