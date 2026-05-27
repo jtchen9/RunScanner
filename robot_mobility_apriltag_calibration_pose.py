@@ -114,6 +114,10 @@ def analyze_snapshot(
             ratio = max(min(ratio, 1.0), -1.0)
 
             yaw_abs_deg = math.degrees(math.acos(ratio))
+            # Treat tiny width/height mismatch as frontal.
+            # This avoids false 5-12 degree yaw near true yaw = 0.
+            if yaw_abs_deg < 12.0:
+                yaw_abs_deg = 0.0
 
             # Sign from perspective asymmetry:
             # right edge shorter  -> positive yaw
