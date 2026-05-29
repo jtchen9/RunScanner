@@ -314,3 +314,81 @@ def get_apriltag_camera_profile(camera_role: str = CAMERA_ROLE_FRONT) -> dict:
         raise ValueError(f"bad camera_role={camera_role}; expected front|rear")
     return APRILTAG_CAMERA_PROFILES[role].copy()
 
+# ------------------------------------------------------------------
+# AprilTag measurement calibration
+# ------------------------------------------------------------------
+
+APRILTAG_CALIBRATION = {
+
+    CAMERA_ROLE_REAR: {      # C270
+
+        "distance": {
+            "a": 1.2638,
+            "b": -0.0852,
+        },
+
+        "angle": {
+            "a": 0.7810,
+            "b": -0.1512,
+        },
+
+        "yaw": {
+            "a": 0.8984,
+            "b": 0.5840,
+        },
+    },
+
+    CAMERA_ROLE_FRONT: {     # Webcam
+
+        "distance": {
+            "a": 0.9845,
+            "b": -0.0112,
+        },
+
+        "angle": {
+            "a": 1.0683,
+            "b": -1.0898,
+        },
+
+        "yaw": {
+            "a": 0.9128,
+            "b": -0.8009,
+        },
+    },
+}
+
+
+def apply_apriltag_calibration(
+    camera_role: str,
+    distance_m: float,
+    angle_deg: float,
+    yaw_deg: float,
+):
+    """
+    Convert raw AprilTag measurements into calibrated measurements.
+    """
+
+    role = (camera_role or CAMERA_ROLE_FRONT).lower()
+
+    c = APRILTAG_CALIBRATION[role]
+
+    distance_cal = (
+        c["distance"]["a"] * distance_m
+        + c["distance"]["b"]
+    )
+
+    angle_cal = (
+        c["angle"]["a"] * angle_deg
+        + c["angle"]["b"]
+    )
+
+    yaw_cal = (
+        c["yaw"]["a"] * yaw_deg
+        + c["yaw"]["b"]
+    )
+
+    return (
+        distance_cal,
+        angle_cal,
+        yaw_cal,
+    )

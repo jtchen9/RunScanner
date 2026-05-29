@@ -9,7 +9,10 @@ import cv2
 import numpy as np
 from pupil_apriltags import Detector
 
-from config import get_apriltag_camera_profile
+from config import (
+    get_apriltag_camera_profile,
+    apply_apriltag_calibration,
+)
 
 
 def rotation_matrix_to_yaw_deg(R: np.ndarray) -> float:
@@ -151,6 +154,17 @@ def analyze_snapshot(
             edge_right_px=edge_right_px,
         )
 
+        (
+            distance_cal_m,
+            angle_cal_deg,
+            yaw_cal_deg,
+        ) = apply_apriltag_calibration(
+            camera_role=camera_role,
+            distance_m=distance_m,
+            angle_deg=angle_deg,
+            yaw_deg=yaw_deg,
+        )
+
         center = np.asarray(r.center, dtype=float)
         center_x = float(center[0])
         center_y = float(center[1])
@@ -179,9 +193,17 @@ def analyze_snapshot(
         tags.append({
             "id": int(r.tag_id),
 
-            "distance_m": round(distance_m, 4),
-            "angle_deg": round(angle_deg, 4),
-            "yaw_deg": round(yaw_deg, 4),
+            "library_pose": {
+                "distance_m": round(distance_m, 4),
+                "angle_deg": round(angle_deg, 4),
+                "yaw_deg": round(yaw_deg, 4),
+            },
+
+            "calibrated_pose": {
+                "distance_m": round(distance_cal_m, 4),
+                "angle_deg": round(angle_cal_deg, 4),
+                "yaw_deg": round(yaw_cal_deg, 4),
+            },
         })
 
     return {
