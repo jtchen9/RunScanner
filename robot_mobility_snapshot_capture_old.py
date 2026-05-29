@@ -73,11 +73,6 @@ def capture_snapshot(
 
     finally:
         cap.release()
-        time.sleep(0.3)
-        try:
-            cv2.destroyAllWindows()
-        except Exception:
-            pass
 
 
 def main():

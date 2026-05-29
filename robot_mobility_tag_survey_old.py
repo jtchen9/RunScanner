@@ -34,48 +34,21 @@ def capture_and_analyze(camera_role: str, snapshot_path: str):
     width = int(prof["width"])
     height = int(prof["height"])
 
-    p = Path(snapshot_path)
+    rc, out, err = run_cmd([
+        PYTHON,
+        SNAPSHOT_SCRIPT,
+        snapshot_path,
+        "--video-dev", video_dev,
+        "--width", str(width),
+        "--height", str(height),
+    ])
 
-    last_err = ""
-    last_out = ""
-
-    for attempt in range(1, 4):
-        # Never accept an old image as a successful new capture.
-        try:
-            p.unlink()
-        except FileNotFoundError:
-            pass
-        except Exception:
-            pass
-
-        t0 = time.time()
-
-        rc, out, err = run_cmd([
-            PYTHON,
-            SNAPSHOT_SCRIPT,
-            snapshot_path,
-            "--video-dev", video_dev,
-            "--width", str(width),
-            "--height", str(height),
-        ], timeout=30)
-
-        last_err = err
-        last_out = out
-
-        if rc == 0 and p.exists():
-            try:
-                if p.stat().st_mtime >= t0:
-                    break
-            except Exception as e:
-                last_err = f"snapshot_mtime_check_failed: {e}"
-
-        time.sleep(1.0)
-    else:
+    if rc != 0:
         return {
             "ok": False,
             "camera_role": camera_role,
             "snapshot_path": snapshot_path,
-            "error": last_err or last_out or "snapshot_failed_or_old_file_after_retries",
+            "error": err or out or "snapshot_failed",
             "tags": [],
         }
 
@@ -84,7 +57,7 @@ def capture_and_analyze(camera_role: str, snapshot_path: str):
         POSE_SCRIPT,
         snapshot_path,
         "--camera-role", camera_role,
-    ], timeout=30)
+    ])
 
     if rc != 0:
         return {
@@ -203,7 +176,7 @@ def main():
     args = ap.parse_args()
 
     front = capture_and_analyze("front", SNAP_FRONT)
-    time.sleep(1.5)
+    time.sleep(0.3)
     rear = capture_and_analyze("rear", SNAP_REAR)
 
     result = {
