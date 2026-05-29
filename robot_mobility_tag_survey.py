@@ -11,10 +11,6 @@ PYTHON = "/usr/bin/python3"
 SNAPSHOT_SCRIPT = "/opt/_RunScanner/robot_mobility_snapshot_capture.py"
 POSE_SCRIPT = "/opt/_RunScanner/robot_mobility_apriltag_calibration_pose.py"
 
-SNAP_FRONT = "/tmp/tag_survey_front.jpg"
-SNAP_REAR = "/tmp/tag_survey_rear.jpg"
-
-
 def run_cmd(cmd, timeout=25):
     cp = subprocess.run(
         cmd,
@@ -202,17 +198,21 @@ def main():
     ap.add_argument("--header", action="store_true")
     args = ap.parse_args()
 
-    front = capture_and_analyze("front", SNAP_FRONT)
+    ts = int(time.time() * 1000)
+
+    snap_front = f"/tmp/front_{ts}.jpg"
+    snap_rear  = f"/tmp/rear_{ts}.jpg"
+    front = capture_and_analyze("front", snap_front)
     time.sleep(1.5)
-    rear = capture_and_analyze("rear", SNAP_REAR)
+    rear = capture_and_analyze("rear", snap_rear)
 
     result = {
         "ok": front.get("ok", False) or rear.get("ok", False),
         "position_id": args.pos,
         "front": front,
         "rear": rear,
-        "snapshot_front": SNAP_FRONT,
-        "snapshot_rear": SNAP_REAR,
+        "snapshot_front": snap_front,
+        "snapshot_rear": snap_rear,
     }
 
     if args.json:
@@ -227,4 +227,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
