@@ -392,3 +392,51 @@ def apply_apriltag_calibration(
         angle_cal,
         yaw_cal,
     )
+
+# ------------------------------------------------------------------
+# Robot mobility / motor calibration
+# ------------------------------------------------------------------
+# Forward movement calibration from Day-3 distance experiment.
+#
+# Fitted model:
+#     actual_distance_m = a * motor_command_distance_m + b
+#
+# We need the inverse because users/NMS command desired true distance:
+#     motor_command_distance_m = inv_a * desired_distance_m + inv_b
+#
+# F1-06 in distance.csv was excluded as an obvious outlier
+# relative to the other 0.4 m repetitions.
+MOTOR_MOVE_CALIBRATION_ENABLED = True
+
+MOTOR_MOVE_DISTANCE_MODEL = {
+    "actual_a": 0.910931174089069,
+    "actual_b": 0.068097165991903,
+
+    "cmd_a": 1.0977777777777775,
+    "cmd_b": -0.07475555555555571,
+
+    "source": "distance.csv Day-3 movement calibration, F1-06 excluded",
+}
+
+
+def apply_motor_move_calibration(distance_m: float) -> float:
+    """
+    Convert desired true move distance into motor-command distance.
+
+    The motion code still reports the requested distance, but uses this
+    calibrated motor distance to compute cruise time.
+    """
+    d = float(distance_m)
+
+    if not MOTOR_MOVE_CALIBRATION_ENABLED:
+        return d
+
+    c = MOTOR_MOVE_DISTANCE_MODEL
+    motor_distance = c["cmd_a"] * d + c["cmd_b"]
+
+    # Keep pathological tiny/negative values from creating invalid commands.
+    if motor_distance < 0.0:
+        motor_distance = 0.0
+
+    return motor_distance
+

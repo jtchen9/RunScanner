@@ -5,6 +5,7 @@ from typing import Tuple
 from TestGyro.DFRobot_RaspberryPi_DC_Motor import DFRobot_DC_Motor_IIC
 from icm20948 import ICM20948
 from robot_mobility_vl53l1x import check_blocked
+from config import apply_motor_move_calibration
 
 TOF_STOP_THRESHOLD_MM = 300
 MOVE_DT_SEC = 0.05
@@ -107,7 +108,10 @@ def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
     if not ok:
         return False, detail
 
-    cruise_time = distance_m * MOVE_SEC_PER_METER
+    # Requested distance is the desired physical movement.
+    # Convert it to a calibrated motor-command distance for timing.
+    motor_distance_m = apply_motor_move_calibration(distance_m)
+    cruise_time = motor_distance_m * MOVE_SEC_PER_METER
 
     # tuning knobs
     TOF_FAIL_CONSEC_LIMIT = 3
@@ -206,6 +210,7 @@ def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
         return True, (
             f"{direction}_done "
             f"distance_m={distance_m:.3f} "
+            f"motor_distance_m={motor_distance_m:.3f} "
             f"kick_time={MOVE_KICK_TIME_SEC:.3f} "
             f"cruise_time={cruise_time:.3f}"
         )
