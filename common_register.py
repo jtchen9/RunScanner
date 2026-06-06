@@ -2,10 +2,74 @@
 import json
 import socket
 import subprocess
+from pathlib import Path
 from typing import Dict, Any, Tuple, Optional
 
 import requests
 from config import get_ax210_iface
+MOBILITY_CAPTURE_SCRIPT = "/opt/_RunScanner/robot_mobility_location_capture.py"
+
+def get_registration_mobility_report() -> Optional[Dict[str, Any]]:
+    """
+    Return robot mobility report for registration if this device supports it.
+
+    Robot:
+      /opt/_RunScanner/robot_mobility_location_capture.py exists
+      -> run it and return JSON result
+
+    Non-mobile device / AP:
+      script does not exist
+      -> return None, so registration payload is unchanged
+    """
+    script = Path(MOBILITY_CAPTURE_SCRIPT)
+
+    if not script.exists():
+        return None
+
+    try:
+        cp = subprocess.run(
+            ["/usr/bin/python3", str(script)],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=60,
+            check=False,
+        )
+
+        out = (cp.stdout or "").strip()
+        err = (cp.stderr or "").strip()
+
+        if out:
+            try:
+                data = json.loads(out)
+            except Exception:
+                return {
+                    "ok": False,
+                    "stage": "registration_mobility_report",
+                    "error": "mobility_report_not_json",
+                    "returncode": cp.returncode,
+                    "raw_stdout": out[:500],
+                    "raw_stderr": err[:500],
+                }
+
+            data["registration_mobility_report"] = True
+            data["returncode"] = cp.returncode
+            return data
+
+        return {
+            "ok": False,
+            "stage": "registration_mobility_report",
+            "error": "mobility_report_empty_stdout",
+            "returncode": cp.returncode,
+            "raw_stderr": err[:500],
+        }
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "stage": "registration_mobility_report",
+            "error": f"{type(e).__name__}: {e}",
+        }
 
 def write_last_register(
     last_register_file,
@@ -158,12 +222,17 @@ def perform_registration(
         }
 
     url = f"{nms_base}/registry/register"
+    mobility_report = get_registration_mobility_report()
+
     body = {
         "mac": mac,
         "ip": ip or None,
         "scanner_version": get_bundle_version(),
         "capabilities": capabilities,
     }
+
+    if mobility_report is not None:
+        body["mobility_report_at_registration"] = mobility_report
 
     try:
         r = requests.post(url, json=body, timeout=http_timeout_sec)
