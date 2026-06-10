@@ -23,6 +23,7 @@ _LOCK = threading.Lock()
 # Small settle gap between consecutive sub-actions in turn-move-turn
 TURN_MOVE_TURN_GAP_SEC = 0.2
 
+ANGLE_EPS_DEG = 0.1
 
 def _now_ts() -> float:
     return time.time()
@@ -152,17 +153,29 @@ def _parse_signed_angle(args: Dict[str, Any], field_name: str) -> Tuple[bool, fl
         return False, 0.0, f"BAD_COMMAND_ARGS missing_or_invalid {field_name}"
 
 
+def _zero_small_angle(angle_deg: float) -> float:
+    try:
+        a = float(angle_deg)
+    except Exception:
+        return 0.0
+    return 0.0 if abs(a) < ANGLE_EPS_DEG else a
+
+
 def _run_signed_turn(angle_deg: float) -> Tuple[bool, str]:
     """
     Positive angle => left turn
     Negative angle => right turn
-    Zero angle => no-op success
+    Near-zero angle => no-op success
     """
+    angle_deg = _zero_small_angle(angle_deg)
+
     if angle_deg > 0:
         return turn_left(abs(angle_deg))
+
     if angle_deg < 0:
         return turn_right(abs(angle_deg))
-    return True, "turn_noop angle_deg=0"
+
+    return True, "turn_noop near_zero_angle"
 
 
 def _run_move_direction(forward: bool, distance_m: float) -> Tuple[bool, str]:
@@ -345,6 +358,9 @@ def exec_mobility_turn_move_turn_forward(args: Dict[str, Any]) -> Tuple[bool, st
     if not ok_post:
         return _fail_immediate("BAD_COMMAND_ARGS", detail_post)
 
+    pre_angle = _zero_small_angle(pre_angle)
+    post_angle = _zero_small_angle(post_angle)
+
     return _execute_turn_move_turn(
         command_name="mobility.turn_move_turn.forward",
         args=args,
@@ -367,6 +383,9 @@ def exec_mobility_turn_move_turn_backward(args: Dict[str, Any]) -> Tuple[bool, s
     ok_post, post_angle, detail_post = _parse_signed_angle(args, "post_angle")
     if not ok_post:
         return _fail_immediate("BAD_COMMAND_ARGS", detail_post)
+
+    pre_angle = _zero_small_angle(pre_angle)
+    post_angle = _zero_small_angle(post_angle)
 
     return _execute_turn_move_turn(
         command_name="mobility.turn_move_turn.backward",
@@ -398,4 +417,3 @@ def exec_mobility_report_location(args: Dict[str, Any]) -> Tuple[bool, str]:
             location_result=None,
         )
         return False, f"UNEXPECTED_EXCEPTION {e}"
-    
