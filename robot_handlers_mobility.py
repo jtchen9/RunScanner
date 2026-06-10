@@ -17,6 +17,7 @@ PYTHON = "/usr/bin/python3"
 LOCATION_CAPTURE_SCRIPT = "/opt/_RunScanner/robot_mobility_location_capture.py"
 
 STATE_PATH = Path("/tmp/mobility_state.json")
+EVENT_LOG_PATH = Path("/tmp/mobility_event_log.jsonl")
 
 _LOCK = threading.Lock()
 
@@ -60,6 +61,19 @@ def _save_state(state: Dict[str, Any]) -> None:
         encoding="utf-8",
     )
 
+def _append_event(event: str, data: Dict[str, Any]) -> None:
+    try:
+        row = {
+            "ts": _now_ts(),
+            "event": event,
+            **data,
+        }
+        EVENT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with EVENT_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
 
 def _set_busy(command: str, args: Dict[str, Any]) -> None:
     state = _load_state()
@@ -73,6 +87,14 @@ def _set_busy(command: str, args: Dict[str, Any]) -> None:
     state["last_location_result"] = None
     state["pending_report"] = False
     _save_state(state)
+
+    _append_event(
+        "command_accepted",
+        {
+            "command": command,
+            "args": args,
+        },
+    )
 
 
 def _finish_state(
@@ -90,6 +112,17 @@ def _finish_state(
     state["last_location_result"] = location_result
     state["pending_report"] = True
     _save_state(state)
+
+    _append_event(
+        "command_finished",
+        {
+            "command": state.get("last_command", ""),
+            "args": state.get("last_command_args", {}),
+            "exec_status": exec_status,
+            "error_code": error_code,
+            "error_detail": error_detail,
+        },
+    )
 
 
 def _fail_immediate(error_code: str, error_detail: str) -> Tuple[bool, str]:
@@ -269,8 +302,27 @@ def _execute_turn_move_turn(
         )
 
     try:
+        _append_event(
+            "tmt_start",
+            {
+                "command": command_name,
+                "forward": forward,
+                "pre_angle": pre_angle,
+                "distance_m": distance_m,
+                "post_angle": post_angle,
+            },
+        )
+
         # 1) pre-turn
         ok_pre, pre_detail = _run_signed_turn(pre_angle)
+        _append_event(
+            "tmt_pre_turn",
+            {
+                "ok": ok_pre,
+                "detail": pre_detail,
+                "pre_angle": pre_angle,
+            },
+        )
         print(f"[mobility] TMT pre_turn result ok={ok_pre} detail={pre_detail!r}", flush=True)
 
         if not ok_pre:
@@ -286,6 +338,16 @@ def _execute_turn_move_turn(
 
         # 2) move
         ok_move, move_detail = _run_move_direction(forward=forward, distance_m=distance_m)
+        _append_event(
+            "tmt_move",
+            {
+                "ok": ok_move,
+                "detail": move_detail,
+                "distance_m": distance_m,
+                "forward": forward,
+            },
+        )
+        
         if not ok_move:
             if move_detail.startswith("COLLISION_BLOCKED_AT_START"):
                 err_code = "COLLISION_BLOCKED_AT_START"
@@ -309,8 +371,16 @@ def _execute_turn_move_turn(
 
         # 3) post-turn
         ok_post, post_detail = _run_signed_turn(post_angle)
+        _append_event(
+            "tmt_post_turn",
+            {
+                "ok": ok_post,
+                "detail": post_detail,
+                "post_angle": post_angle,
+            },
+        )
         print(f"[mobility] TMT post_turn result ok={ok_post} detail={post_detail!r}", flush=True)
-        
+
         if not ok_post:
             _finish_state(
                 exec_status="error",
