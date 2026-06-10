@@ -262,9 +262,17 @@ def _execute_turn_move_turn(
             return _fail_immediate("MOBILITY_BUSY", f"{command_name} ignored while busy")
         _set_busy(command_name, args)
 
+        print(
+            f"[mobility] TMT received command={command_name} "
+            f"pre_angle={pre_angle!r} distance_m={distance_m!r} post_angle={post_angle!r}",
+            flush=True,
+        )
+
     try:
         # 1) pre-turn
         ok_pre, pre_detail = _run_signed_turn(pre_angle)
+        print(f"[mobility] TMT pre_turn result ok={ok_pre} detail={pre_detail!r}", flush=True)
+
         if not ok_pre:
             _finish_state(
                 exec_status="error",
@@ -301,6 +309,8 @@ def _execute_turn_move_turn(
 
         # 3) post-turn
         ok_post, post_detail = _run_signed_turn(post_angle)
+        print(f"[mobility] TMT post_turn result ok={ok_post} detail={post_detail!r}", flush=True)
+        
         if not ok_post:
             _finish_state(
                 exec_status="error",
