@@ -298,15 +298,6 @@ def _execute_turn_move_turn(
     try:
         # 1) pre-turn
         ok_pre, pre_detail = _run_signed_turn(pre_angle)
-        _append_event(
-            "tmt_pre_turn",
-            {
-                "ok": ok_pre,
-                "detail": pre_detail,
-                "pre_angle": pre_angle,
-            },
-        )
-
         if not ok_pre:
             _finish_state(
                 exec_status="error",
