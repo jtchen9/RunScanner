@@ -295,24 +295,7 @@ def _execute_turn_move_turn(
             return _fail_immediate("MOBILITY_BUSY", f"{command_name} ignored while busy")
         _set_busy(command_name, args)
 
-        print(
-            f"[mobility] TMT received command={command_name} "
-            f"pre_angle={pre_angle!r} distance_m={distance_m!r} post_angle={post_angle!r}",
-            flush=True,
-        )
-
     try:
-        _append_event(
-            "tmt_start",
-            {
-                "command": command_name,
-                "forward": forward,
-                "pre_angle": pre_angle,
-                "distance_m": distance_m,
-                "post_angle": post_angle,
-            },
-        )
-
         # 1) pre-turn
         ok_pre, pre_detail = _run_signed_turn(pre_angle)
         _append_event(
@@ -323,7 +306,6 @@ def _execute_turn_move_turn(
                 "pre_angle": pre_angle,
             },
         )
-        print(f"[mobility] TMT pre_turn result ok={ok_pre} detail={pre_detail!r}", flush=True)
 
         if not ok_pre:
             _finish_state(
@@ -337,17 +319,7 @@ def _execute_turn_move_turn(
         time.sleep(TURN_MOVE_TURN_GAP_SEC)
 
         # 2) move
-        ok_move, move_detail = _run_move_direction(forward=forward, distance_m=distance_m)
-        _append_event(
-            "tmt_move",
-            {
-                "ok": ok_move,
-                "detail": move_detail,
-                "distance_m": distance_m,
-                "forward": forward,
-            },
-        )
-        
+        ok_move, move_detail = _run_move_direction(forward=forward, distance_m=distance_m)       
         if not ok_move:
             if move_detail.startswith("COLLISION_BLOCKED_AT_START"):
                 err_code = "COLLISION_BLOCKED_AT_START"
@@ -371,16 +343,6 @@ def _execute_turn_move_turn(
 
         # 3) post-turn
         ok_post, post_detail = _run_signed_turn(post_angle)
-        _append_event(
-            "tmt_post_turn",
-            {
-                "ok": ok_post,
-                "detail": post_detail,
-                "post_angle": post_angle,
-            },
-        )
-        print(f"[mobility] TMT post_turn result ok={ok_post} detail={post_detail!r}", flush=True)
-
         if not ok_post:
             _finish_state(
                 exec_status="error",
