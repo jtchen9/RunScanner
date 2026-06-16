@@ -112,17 +112,22 @@ def capture_and_analyze(camera_role: str, snapshot_path: str):
         "camera_params": data.get("camera_params", {}),
     }
 
-
 def simplify_tag(camera_role, tag):
+    cp = tag.get("calibrated_pose", {})
     lp = tag.get("library_pose", {})
     ig = tag.get("image_geometry", {})
+
+    pose = cp if isinstance(cp, dict) and cp else lp
 
     return {
         "camera": camera_role,
         "id": tag.get("id"),
-        "distance_m": lp.get("distance_m"),
-        "angle_deg": lp.get("angle_deg"),
-        "yaw_deg": lp.get("yaw_deg"),
+        "distance_m": pose.get("distance_m"),
+        "angle_deg": pose.get("angle_deg"),
+        "yaw_deg": pose.get("yaw_deg"),
+        "raw_distance_m": lp.get("distance_m"),
+        "raw_angle_deg": lp.get("angle_deg"),
+        "raw_yaw_deg": lp.get("yaw_deg"),
         "center_x": ig.get("center_x"),
         "center_y": ig.get("center_y"),
         "w": ig.get("avg_width_px"),
@@ -156,8 +161,11 @@ def print_brief(position_id, front, rear):
             f"  cam={r['camera']} "
             f"tag={r['id']} "
             f"dist={r['distance_m']} "
+            f"raw_dist={r['raw_distance_m']} "
             f"angle={r['angle_deg']} "
+            f"raw_angle={r['raw_angle_deg']} "
             f"yaw={r['yaw_deg']} "
+            f"raw_yaw={r['raw_yaw_deg']} "
             f"cx={r['center_x']} "
             f"cy={r['center_y']} "
             f"w={r['w']} "
