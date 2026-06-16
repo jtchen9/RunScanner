@@ -322,7 +322,8 @@ APRILTAG_CALIBRATION = {
     CAMERA_ROLE_REAR: {
         "distance": {
             # old: "a": 1.2638, "b": -0.0852
-            "a": 1.6631*1.25,
+            # "a": 1.6631 * 1.25,
+            "a": 2.075,
             "b": -0.1978,
         },
         "angle": {
