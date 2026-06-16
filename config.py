@@ -321,7 +321,7 @@ def get_apriltag_camera_profile(camera_role: str = CAMERA_ROLE_FRONT) -> dict:
 APRILTAG_CALIBRATION = {
     CAMERA_ROLE_REAR: {
         "distance": {
-            "a": 1.32, 
+            "a": 1.2638, 
             "b": -0.0852,
         },
         "angle": {
