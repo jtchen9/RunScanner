@@ -321,10 +321,8 @@ def get_apriltag_camera_profile(camera_role: str = CAMERA_ROLE_FRONT) -> dict:
 APRILTAG_CALIBRATION = {
     CAMERA_ROLE_REAR: {
         "distance": {
-            "a": 1.2638 * 1.1, 
+            "a": 1.32, 
             "b": -0.0852,
-            # "a": 1.6631,
-            # "b": -0.1978,
         },
         "angle": {
             "a": 0.7810,
@@ -333,8 +331,6 @@ APRILTAG_CALIBRATION = {
         "yaw": {
             "a": 0.8984, 
             "b": 0.5840,
-            # "a": 0.8984,
-            # "b": -7.8,
         },
     },
 
@@ -350,8 +346,6 @@ APRILTAG_CALIBRATION = {
         "yaw": {
             "a": 0.9128, 
             "b": -0.8009,
-            # "a": 0.9128,
-            # "b": -9.7,
         },
     },
 }
