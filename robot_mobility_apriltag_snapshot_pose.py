@@ -50,8 +50,8 @@ def geometry_yaw_deg(
     yaw_abs_deg = math.degrees(math.acos(ratio))
 
     # Avoid false yaw when tag is almost frontal.
-    if yaw_abs_deg < 12.0:
-        yaw_abs_deg = 0.0
+    # if yaw_abs_deg < 12.0:
+    #     yaw_abs_deg = 0.0
 
     if edge_right_px < edge_left_px:
         return yaw_abs_deg
