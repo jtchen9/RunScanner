@@ -317,35 +317,43 @@ def get_apriltag_camera_profile(camera_role: str = CAMERA_ROLE_FRONT) -> dict:
 # ------------------------------------------------------------------
 # AprilTag measurement calibration
 # ------------------------------------------------------------------
-
-APRILTAG_CALIBRATION = {
-    CAMERA_ROLE_REAR: {
-        "distance": {
-            "a": 1.2638, 
-            "b": -0.0852,
-        },
-        "angle": {
-            "a": 0.7810,
-            "b": -0.1512,
-        },
-        "yaw": {
-            "a": 0.8984, 
-            "b": 0.5840,
-        },
-    },
-
+APRILTAG_CALIBRATION_V2 = {
     CAMERA_ROLE_FRONT: {
         "distance": {
             "a": 0.9845,
             "b": -0.0112,
+            "c": -0.00008282,
+            "d": -0.00013238,
         },
         "angle": {
             "a": 1.0683,
             "b": -1.0898,
+            "c": -0.01992784,
+            "d": 0.00531406,
         },
         "yaw": {
-            "a": 0.9128, 
-            "b": -0.8009,
+            "a": 0.93243945,
+            "b": -2.19596864,
+            "c": -0.01382297,
+        },
+    },
+
+    CAMERA_ROLE_REAR: {
+        "distance": {
+            "a": 1.2638,
+            "b": -0.0852,
+            "c": -0.00053647,
+            "d": -0.00003479,
+        },
+        "angle": {
+            "a": 0.7810,
+            "b": -0.1512,
+            "c": -0.07405719,
+            "d": -0.00408491,
+        },
+        "yaw": {
+            "a": 1.02865054,
+            "b": -2.34190125,
         },
     },
 }
@@ -359,25 +367,37 @@ def apply_apriltag_calibration(
 ):
     """
     Convert raw AprilTag measurements into calibrated measurements.
+
+    Inputs are raw:
+      distance_m
+      angle_deg
+      yaw_deg
+
+    Output calibrated_pose is directly used by NMS.
     """
 
     role = (camera_role or CAMERA_ROLE_FRONT).lower()
-
-    c = APRILTAG_CALIBRATION[role]
+    c = APRILTAG_CALIBRATION_V2[role]
 
     distance_cal = (
         c["distance"]["a"] * distance_m
         + c["distance"]["b"]
+        + c["distance"].get("c", 0.0) * angle_deg
+        + c["distance"].get("d", 0.0) * angle_deg * angle_deg
     )
 
     angle_cal = (
         c["angle"]["a"] * angle_deg
         + c["angle"]["b"]
+        + c["angle"].get("c", 0.0) * angle_deg
+        + c["angle"].get("d", 0.0) * angle_deg * angle_deg
     )
 
     yaw_cal = (
         c["yaw"]["a"] * yaw_deg
         + c["yaw"]["b"]
+        + c["yaw"].get("c", 0.0) * angle_deg
+        + c["yaw"].get("d", 0.0) * angle_deg * angle_deg
     )
 
     return (
@@ -385,6 +405,7 @@ def apply_apriltag_calibration(
         angle_cal,
         yaw_cal,
     )
+
 
 # ------------------------------------------------------------------
 # Robot mobility / motor calibration
