@@ -37,8 +37,10 @@ BUS = 1
 # Forward/backward calibration placeholders
 # Replace after your real calibration
 # =========================================================
-MOVE_KICK_SPEED = 40
-MOVE_CRUISE_SPEED = 25
+# MOVE_KICK_SPEED = 40
+# MOVE_CRUISE_SPEED = 25
+MOVE_KICK_SPEED = 60
+MOVE_CRUISE_SPEED = 40
 MOVE_KICK_TIME_SEC = 0.35
 
 # placeholder: 10 sec per meter at current cruise speed
