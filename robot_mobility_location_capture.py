@@ -31,6 +31,10 @@ BETWEEN_CAMERA_SLEEP_SEC = 1.5
 CAPTURE_RETRY = 3
 CAPTURE_RETRY_SLEEP_SEC = 1.0
 
+# Rear C270 sometimes fails to acquire camera ownership.
+# Retry more only when needed; first-attempt success has no extra delay.
+REAR_CAPTURE_RETRY = 7
+REAR_CAPTURE_RETRY_SLEEP_SEC = 0.8
 
 def run_cmd(cmd, timeout=25):
     cp = subprocess.run(
@@ -92,7 +96,10 @@ def capture_snapshot(camera_role: str, snapshot_path: str) -> Tuple[bool, Dict[s
     last_err = ""
     last_out = ""
 
-    for attempt in range(1, CAPTURE_RETRY + 1):
+    retry_n = REAR_CAPTURE_RETRY if camera_role == CAMERA_ROLE_REAR else CAPTURE_RETRY
+    retry_sleep = REAR_CAPTURE_RETRY_SLEEP_SEC if camera_role == CAMERA_ROLE_REAR else CAPTURE_RETRY_SLEEP_SEC
+
+    for attempt in range(1, retry_n + 1):
         rc, out, err = run_cmd(
             [
                 PYTHON,
@@ -127,7 +134,8 @@ def capture_snapshot(camera_role: str, snapshot_path: str) -> Tuple[bool, Dict[s
 
         last_err = err
         last_out = out
-        time.sleep(CAPTURE_RETRY_SLEEP_SEC)
+        if attempt < retry_n:
+            time.sleep(retry_sleep)
 
     return False, {
         "ok": False,
@@ -137,6 +145,9 @@ def capture_snapshot(camera_role: str, snapshot_path: str) -> Tuple[bool, Dict[s
         "video_dev": video_dev,
         "width": width,
         "height": height,
+        "attempts": retry_n,
+        "last_stdout": (last_out or "")[-500:],
+        "last_stderr": (last_err or "")[-500:],
         "error": last_err or last_out or "snapshot_failed_after_retries",
     }
 
