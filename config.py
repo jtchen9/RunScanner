@@ -320,10 +320,23 @@ def get_apriltag_camera_profile(camera_role: str = CAMERA_ROLE_FRONT) -> dict:
 APRILTAG_CALIBRATION_V2 = {
     CAMERA_ROLE_FRONT: {
         "distance": {
-            "a": 0.98557,
-            "b": -0.01318,
-            "c": 0.000579,
-            "d": -0.0001228,
+            # Model A:
+            # "a": 0.98557,
+            # "b": -0.01318,
+            # "c": 0.000579,
+            # "d": -0.0001228,
+
+            # Model B:
+            # distance_cal =
+            #   a * raw_dist
+            # + b
+            # + c * raw_dist * raw_angle
+            # + d * raw_dist * raw_angle * raw_angle
+            "model": "dist_angle_scaled",
+            "a": 0.95428,
+            "b": 0.02264,
+            "c": 0.000175,
+            "d": -0.000110,
         },
         "angle": {
             "a": 1.0683,
@@ -358,6 +371,24 @@ APRILTAG_CALIBRATION_V2 = {
     },
 }
 
+def _calibrate_distance(distance_m: float, angle_deg: float, p: dict) -> float:
+    model = str(p.get("model") or "angle_offset").strip()
+
+    if model == "dist_angle_scaled":
+        return (
+            p["a"] * distance_m
+            + p["b"]
+            + p.get("c", 0.0) * distance_m * angle_deg
+            + p.get("d", 0.0) * distance_m * angle_deg * angle_deg
+        )
+
+    # default / old structure
+    return (
+        p["a"] * distance_m
+        + p["b"]
+        + p.get("c", 0.0) * angle_deg
+        + p.get("d", 0.0) * angle_deg * angle_deg
+    )
 
 def apply_apriltag_calibration(
     camera_role: str,
@@ -379,11 +410,10 @@ def apply_apriltag_calibration(
     role = (camera_role or CAMERA_ROLE_FRONT).lower()
     c = APRILTAG_CALIBRATION_V2[role]
 
-    distance_cal = (
-        c["distance"]["a"] * distance_m
-        + c["distance"]["b"]
-        + c["distance"].get("c", 0.0) * angle_deg
-        + c["distance"].get("d", 0.0) * angle_deg * angle_deg
+    distance_cal = _calibrate_distance(
+        distance_m=distance_m,
+        angle_deg=angle_deg,
+        p=c["distance"],
     )
 
     angle_cal = (
