@@ -39,8 +39,8 @@ BUS = 1
 # =========================================================
 # MOVE_KICK_SPEED = 40
 # MOVE_CRUISE_SPEED = 25
-MOVE_KICK_SPEED = 40
-MOVE_CRUISE_SPEED = 40
+MOVE_KICK_SPEED = 50
+MOVE_CRUISE_SPEED = 50
 MOVE_KICK_TIME_SEC = 0.35
 
 # placeholder: 10 sec per meter at current cruise speed
