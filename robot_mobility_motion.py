@@ -37,10 +37,10 @@ BUS = 1
 # Forward/backward calibration placeholders
 # Replace after your real calibration
 # =========================================================
-MOVE_KICK_SPEED = 40
-MOVE_CRUISE_SPEED = 25
-# MOVE_KICK_SPEED = 50
-# MOVE_CRUISE_SPEED = 50
+# MOVE_KICK_SPEED = 40
+# MOVE_CRUISE_SPEED = 25
+MOVE_KICK_SPEED = 50
+MOVE_CRUISE_SPEED = 50
 MOVE_KICK_TIME_SEC = 0.35
 
 # placeholder: 10 sec per meter at current cruise speed
@@ -107,8 +107,10 @@ def _read_yaw_rate(imu) -> float:
     ax, ay, az, gx, gy, gz = imu.read_accelerometer_gyro_data()
     return gz - GZ_BIAS
 
+
 def _clamp_speed(v: float) -> int:
     return int(max(0, min(100, round(v))))
+
 
 def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
     if distance_m < MIN_MOVE_DISTANCE_M or distance_m > MAX_MOVE_DISTANCE_M:
@@ -118,118 +120,93 @@ def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
     if not ok:
         return False, detail
 
-    # Requested distance is the desired physical movement.
-    # Convert it to a calibrated motor-command distance for timing.
     motor_distance_m = apply_motor_move_calibration(distance_m)
     cruise_time = motor_distance_m * MOVE_SEC_PER_METER
 
-    # tuning knobs
-    TOF_FAIL_CONSEC_LIMIT = 3
-    TOF_RECOVERY_SLEEP_SEC = 0.25
-    TOF_PRECHECK_RETRY = 3
+    yaw_deg = 0.0
+    max_abs_yaw_deg = 0.0
 
     try:
         _safe_stop(m)
         _sleep_checked(0.2)
 
-        # -------------------------------------------------
-        # Pre-check collision only for forward motion
-        # -------------------------------------------------
-        if False and forward:
-            tof_fail_count = 0
+        ok_i, imu, detail_i = _imu_begin() if forward else (False, None, "")
+        if forward and HEADING_HOLD_ENABLED and not ok_i and HEADING_HOLD_REQUIRE_IMU:
+            _safe_stop(m)
+            return False, f"IMU_HEADING_HOLD_FAIL {detail_i}"
 
-            for _ in range(TOF_PRECHECK_RETRY):
-                ok_tof, blocked, d_mm, tof_detail = check_blocked(TOF_STOP_THRESHOLD_MM)
+        def apply_forward_heading_hold(base_speed: int, dt: float):
+            nonlocal yaw_deg, max_abs_yaw_deg
 
-                if not ok_tof:
-                    tof_fail_count += 1
-                    time.sleep(MOVE_DT_SEC)
-                    continue
+            if not (forward and HEADING_HOLD_ENABLED and ok_i):
+                m.motor_movement([m.M1], m.CCW, base_speed)
+                m.motor_movement([m.M2], m.CW,  base_speed)
+                return
 
-                # valid reading
-                tof_fail_count = 0
+            yaw_rate = _read_yaw_rate(imu)
+            yaw_deg += yaw_rate * dt
+            max_abs_yaw_deg = max(max_abs_yaw_deg, abs(yaw_deg))
 
-                if blocked:
-                    _safe_stop(m)
-                    time.sleep(TOF_RECOVERY_SLEEP_SEC)
-                    return False, f"COLLISION_BLOCKED_AT_START distance_mm={d_mm}"
+            err = yaw_deg
+            if abs(err) < HEADING_HOLD_DEADBAND_DEG:
+                corr = 0.0
+            else:
+                corr = HEADING_HOLD_KP * err
+                corr = max(
+                    -HEADING_HOLD_MAX_CORRECTION,
+                    min(HEADING_HOLD_MAX_CORRECTION, corr),
+                )
 
-                # valid and clear → no need to keep prechecking
-                break
+            # Positive yaw = robot turned right.
+            # Correct by turning left: right wheel faster, left wheel slower.
+            right_speed = _clamp_speed(base_speed + corr)
+            left_speed  = _clamp_speed(base_speed - corr)
 
-            if tof_fail_count >= TOF_FAIL_CONSEC_LIMIT:
-                _safe_stop(m)
-                time.sleep(TOF_RECOVERY_SLEEP_SEC)
-                return False, f"TOF_SENSOR_FAIL {tof_detail}"
+            m.motor_movement([m.M1], m.CCW, right_speed)
+            m.motor_movement([m.M2], m.CW,  left_speed)
 
         # -------------------------------------------------
         # Kick phase
         # -------------------------------------------------
         if forward:
-            m.motor_movement([m.M1], m.CCW, MOVE_KICK_SPEED)   # right forward
-            m.motor_movement([m.M2], m.CW,  MOVE_KICK_SPEED)   # left forward
-        else:
-            m.motor_movement([m.M1], m.CW,  MOVE_KICK_SPEED)   # right backward
-            m.motor_movement([m.M2], m.CCW, MOVE_KICK_SPEED)   # left backward
-
-        _sleep_checked(MOVE_KICK_TIME_SEC)
-
-        # -------------------------------------------------
-        # Cruise phase
-        # -------------------------------------------------
-        if forward:
-            ok_i, imu, detail_i = _imu_begin()
-            if HEADING_HOLD_ENABLED and not ok_i and HEADING_HOLD_REQUIRE_IMU:
-                _safe_stop(m)
-                return False, f"IMU_HEADING_HOLD_FAIL {detail_i}"
-
-            yaw_deg = 0.0
-            max_abs_yaw_deg = 0.0
             t_prev = time.time()
-
             elapsed = 0.0
-            tof_fail_count = 0
 
-            while elapsed < cruise_time:
-                step = min(MOVE_DT_SEC, cruise_time - elapsed)
+            while elapsed < MOVE_KICK_TIME_SEC:
+                step = min(MOVE_DT_SEC, MOVE_KICK_TIME_SEC - elapsed)
+                t_now = time.time()
+                dt = t_now - t_prev
+                t_prev = t_now
 
-                if HEADING_HOLD_ENABLED and ok_i:
-                    t_now = time.time()
-                    dt = t_now - t_prev
-                    t_prev = t_now
-
-                    yaw_rate = _read_yaw_rate(imu)
-                    yaw_deg += yaw_rate * dt
-                    max_abs_yaw_deg = max(max_abs_yaw_deg, abs(yaw_deg))
-
-                    err = yaw_deg
-
-                    if abs(err) < HEADING_HOLD_DEADBAND_DEG:
-                        corr = 0.0
-                    else:
-                        corr = HEADING_HOLD_KP * err
-                        corr = max(
-                            -HEADING_HOLD_MAX_CORRECTION,
-                            min(HEADING_HOLD_MAX_CORRECTION, corr),
-                        )
-
-                    # Positive yaw means robot turned right.
-                    # Correct by turning left:
-                    #   right wheel faster, left wheel slower.
-                    right_speed = _clamp_speed(MOVE_CRUISE_SPEED + corr)
-                    left_speed  = _clamp_speed(MOVE_CRUISE_SPEED - corr)
-
-                    m.motor_movement([m.M1], m.CCW, right_speed)
-                    m.motor_movement([m.M2], m.CW,  left_speed)
-                else:
-                    m.motor_movement([m.M1], m.CCW, MOVE_CRUISE_SPEED)
-                    m.motor_movement([m.M2], m.CW,  MOVE_CRUISE_SPEED)
+                apply_forward_heading_hold(MOVE_KICK_SPEED, dt)
 
                 time.sleep(step)
                 elapsed += step
 
         else:
-            # backward unchanged for now (no rear sensor yet)
+            m.motor_movement([m.M1], m.CW,  MOVE_KICK_SPEED)
+            m.motor_movement([m.M2], m.CCW, MOVE_KICK_SPEED)
+            _sleep_checked(MOVE_KICK_TIME_SEC)
+
+        # -------------------------------------------------
+        # Cruise phase
+        # -------------------------------------------------
+        if forward:
+            t_prev = time.time()
+            elapsed = 0.0
+
+            while elapsed < cruise_time:
+                step = min(MOVE_DT_SEC, cruise_time - elapsed)
+                t_now = time.time()
+                dt = t_now - t_prev
+                t_prev = t_now
+
+                apply_forward_heading_hold(MOVE_CRUISE_SPEED, dt)
+
+                time.sleep(step)
+                elapsed += step
+
+        else:
             m.motor_movement([m.M1], m.CW,  MOVE_CRUISE_SPEED)
             m.motor_movement([m.M2], m.CCW, MOVE_CRUISE_SPEED)
             _sleep_checked(cruise_time)
@@ -251,7 +228,7 @@ def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
     except Exception as e:
         _safe_stop(m)
         return False, f"MOVE_EXEC_FAIL {e}"
-
+    
 
 def _run_turn(left: bool, angle_deg: float) -> Tuple[bool, str]:
     if angle_deg < MIN_TURN_ANGLE_DEG or angle_deg > MAX_TURN_ANGLE_DEG:
