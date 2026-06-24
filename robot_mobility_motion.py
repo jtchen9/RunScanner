@@ -48,7 +48,7 @@ MOVE_SEC_PER_METER = 10.0 / 1.0
 
 HEADING_HOLD_ENABLED = True
 HEADING_HOLD_REQUIRE_IMU = True
-HEADING_HOLD_KP = 0.4
+HEADING_HOLD_KP = 0.8
 HEADING_HOLD_MAX_CORRECTION = 8
 HEADING_HOLD_DEADBAND_DEG = 0.5
 
@@ -62,7 +62,7 @@ TURN_DT = 0.02
 TURN_STOP_MARGIN_DEG = 0.0
 
 # Measured stationary bias of gz
-GZ_BIAS = 0.41088
+GZ_BIAS = 0.42088
 
 # =========================================================
 # Limits / guards
