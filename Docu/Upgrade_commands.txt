@@ -53,3 +53,32 @@ pull from Pi
 cd /opt/_RunScanner
 git reset --hard HEAD
 git pull
+
+==========================
+measure GZ_BIAS
+
+python3 - <<'PY'
+import time
+from icm20948 import ICM20948
+
+imu = ICM20948()
+vals = []
+t0 = time.time()
+
+while time.time() - t0 < 30:
+    ax, ay, az, gx, gy, gz = imu.read_accelerometer_gyro_data()
+    vals.append(gz)
+    time.sleep(0.05)
+
+avg = sum(vals) / len(vals)
+print("samples=", len(vals))
+print("new_GZ_BIAS=", avg)
+PY
+
+==========================
+i2c table
+
+sudo i2cdetect -y 1
+
+==========================
+
