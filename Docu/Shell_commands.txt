@@ -81,4 +81,9 @@ i2c table
 sudo i2cdetect -y 1
 
 ==========================
+fix error of "lgpio.error: 'can not open gpiochip'"
 
+sudo usermod -aG dialout pi
+sudo reboot
+
+==========================
