@@ -85,5 +85,6 @@ fix error of "lgpio.error: 'can not open gpiochip'"
 
 sudo usermod -aG dialout pi
 sudo reboot
+groups  # should see dialout
 
 ==========================
