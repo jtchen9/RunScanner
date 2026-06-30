@@ -147,16 +147,13 @@ def analyze_snapshot(
         avg_width_px = (edge_top_px + edge_bottom_px) / 2.0
         avg_height_px = (edge_left_px + edge_right_px) / 2.0
 
-        geometry_yaw_value_deg = geometry_yaw_deg(
+        yaw_deg = geometry_yaw_deg(
             avg_width_px=avg_width_px,
             avg_height_px=avg_height_px,
             edge_left_px=edge_left_px,
             edge_right_px=edge_right_px,
         )
 
-        # Keep the existing calibrated_pose behavior unchanged for now:
-        # calibrated_pose.yaw_deg still uses the old geometry_yaw_value_deg.
-        # This avoids changing the robot/NMS behavior while we compare yaw sources.
         (
             distance_cal_m,
             angle_cal_deg,
@@ -165,20 +162,7 @@ def analyze_snapshot(
             camera_role=camera_role,
             distance_m=distance_m,
             angle_deg=angle_deg,
-            yaw_deg=geometry_yaw_value_deg,
-        )
-
-        # Diagnostic only: what would calibration produce if we used the
-        # AprilTag library rotation-matrix yaw instead of the geometry yaw?
-        (
-            _distance_cal_from_library_yaw_m,
-            _angle_cal_from_library_yaw_deg,
-            yaw_cal_from_library_deg,
-        ) = apply_apriltag_calibration(
-            camera_role=camera_role,
-            distance_m=distance_m,
-            angle_deg=angle_deg,
-            yaw_deg=library_yaw_deg,
+            yaw_deg=yaw_deg,
         )
 
         center = np.asarray(r.center, dtype=float)
@@ -209,52 +193,16 @@ def analyze_snapshot(
         tags.append({
             "id": int(r.tag_id),
 
-            # Real AprilTag library pose output.
-            # NOTE: previous code accidentally placed geometry yaw here.
             "library_pose": {
                 "distance_m": round(distance_m, 4),
                 "angle_deg": round(angle_deg, 4),
-                "yaw_deg": round(library_yaw_deg, 4),
+                "yaw_deg": round(yaw_deg, 4),
             },
 
-            # Old geometry yaw path, kept visible for comparison.
-            "geometry_pose": {
-                "yaw_deg": round(geometry_yaw_value_deg, 4),
-                "avg_width_px": round(avg_width_px, 4),
-                "avg_height_px": round(avg_height_px, 4),
-                "edge_left_px": round(edge_left_px, 4),
-                "edge_right_px": round(edge_right_px, 4),
-                "edge_top_px": round(edge_top_px, 4),
-                "edge_bottom_px": round(edge_bottom_px, 4),
-                "width_height_ratio": (
-                    round(width_height_ratio, 6)
-                    if width_height_ratio is not None
-                    else None
-                ),
-                "perspective_skew_lr": (
-                    round(perspective_skew_lr, 6)
-                    if perspective_skew_lr is not None
-                    else None
-                ),
-                "perspective_skew_tb": (
-                    round(perspective_skew_tb, 6)
-                    if perspective_skew_tb is not None
-                    else None
-                ),
-            },
-
-            # Existing behavior: still calibrated from geometry yaw.
             "calibrated_pose": {
                 "distance_m": round(distance_cal_m, 4),
                 "angle_deg": round(angle_cal_deg, 4),
                 "yaw_deg": round(yaw_cal_deg, 4),
-            },
-
-            # Diagnostic only: calibrated yaw if using library yaw.
-            "calibrated_pose_from_library_yaw": {
-                "distance_m": round(distance_cal_m, 4),
-                "angle_deg": round(angle_cal_deg, 4),
-                "yaw_deg": round(yaw_cal_from_library_deg, 4),
             },
         })
 
