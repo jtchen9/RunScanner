@@ -147,21 +147,12 @@ def analyze_snapshot(
         avg_width_px = (edge_top_px + edge_bottom_px) / 2.0
         avg_height_px = (edge_left_px + edge_right_px) / 2.0
 
-        geometry_yaw_raw_deg = geometry_yaw_deg(
+        yaw_deg = geometry_yaw_deg(
             avg_width_px=avg_width_px,
             avg_height_px=avg_height_px,
             edge_left_px=edge_left_px,
             edge_right_px=edge_right_px,
         )
-
-        # TEMPORARY LIBRARY-YAW TEST:
-        # Feed AprilTag library yaw through the existing calibrated_pose["yaw_deg"]
-        # channel so NMS / t11 can observe it without any NMS-side change.
-        #
-        # Distance and angle are unchanged. Only the yaw input to
-        # apply_apriltag_calibration() is changed from geometry/arccos yaw to
-        # the AprilTag pose_R yaw.
-        yaw_deg = library_yaw_deg
 
         (
             distance_cal_m,
@@ -205,14 +196,7 @@ def analyze_snapshot(
             "library_pose": {
                 "distance_m": round(distance_m, 4),
                 "angle_deg": round(angle_deg, 4),
-
-                # TEMPORARY LIBRARY-YAW TEST:
-                # yaw_deg is now the AprilTag library yaw used for calibration.
-                "yaw_deg": round(library_yaw_deg, 4),
-
-                # Keep the old geometry/arccos yaw visible for comparison.
-                "geometry_yaw_raw_deg": round(geometry_yaw_raw_deg, 4),
-                "library_yaw_raw_deg": round(library_yaw_deg, 4),
+                "yaw_deg": round(yaw_deg, 4),
             },
 
             "calibrated_pose": {
