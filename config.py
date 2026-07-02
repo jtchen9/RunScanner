@@ -333,10 +333,14 @@ APRILTAG_CALIBRATION_V2 = {
             # + c * raw_dist * raw_angle
             # + d * raw_dist * raw_angle * raw_angle
             "model": "dist_angle_scaled",
-            "a": 0.95428,
-            "b": 0.02264,
-            "c": 0.000175,
-            "d": -0.000110,
+            "a": 0.958288,
+            "b": 0.060132,
+            "c": 0.0000648,
+            "d": -0.00011747,
+            # "a": 0.95428,
+            # "b": 0.02264,
+            # "c": 0.000175,
+            # "d": -0.000110,
         },
         "angle": {
             "a": 1.0683,
