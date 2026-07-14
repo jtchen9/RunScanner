@@ -39,7 +39,7 @@ BUS = 1
 # =========================================================
 MOVE_KICK_SPEED = 40
 MOVE_CRUISE_SPEED = 25
-MOVE_BUMP_CROSSING_CRUISE_SPEED = 60
+MOVE_BUMP_CROSSING_CRUISE_SPEED = 50
 MOVE_KICK_TIME_SEC = 0.35
 
 MOVE_PROFILE_DEFAULT = "default"
