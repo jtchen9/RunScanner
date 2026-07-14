@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# python3 robot_mobility_move_calibration.py --distance 0.4 -b
+# python3 robot_mobility_move_calibration.py --distance 0.4 --move-profile bump_crossing -b
 # 
 # To debug:
 # sudo i2cdetect -y 1
@@ -42,7 +42,8 @@ def parse_cruise_time(detail: str):
 
 def run_move_calibration(distance_m: float,
                          trial: str = "",
-                         rep: str = "") -> dict:
+                         rep: str = "",
+                         move_profile: str = "default") -> dict:
 
     if distance_m == 0:
         return {
@@ -51,6 +52,7 @@ def run_move_calibration(distance_m: float,
             "rep": rep,
             "cmd_distance_m": distance_m,
             "direction": "none",
+            "move_profile": move_profile,
             "reported_distance_m": None,
             "cruise_time_sec": None,
             "status": "BAD_COMMAND_ARGS",
@@ -60,10 +62,10 @@ def run_move_calibration(distance_m: float,
 
     if distance_m > 0:
         direction = "forward"
-        ok, detail = move_forward(abs(distance_m))
+        ok, detail = move_forward(abs(distance_m), move_profile=move_profile)
     else:
         direction = "backward"
-        ok, detail = move_backward(abs(distance_m))
+        ok, detail = move_backward(abs(distance_m), move_profile=move_profile)
 
     reported_distance = parse_distance(detail)
     cruise_time = parse_cruise_time(detail)
@@ -74,6 +76,7 @@ def run_move_calibration(distance_m: float,
         "rep": rep,
         "cmd_distance_m": distance_m,
         "direction": direction,
+        "move_profile": move_profile,
         "reported_distance_m": reported_distance,
         "cruise_time_sec": cruise_time,
         "status": "ok" if ok else "error",
@@ -88,6 +91,7 @@ def print_brief(result: dict) -> None:
         f"rep={result.get('rep')} "
         f"cmd={result.get('cmd_distance_m'):.3f} "
         f"dir={result.get('direction')} "
+        f"profile={result.get('move_profile')} "
         f"ok={result.get('ok')} "
         f"reported={result.get('reported_distance_m')} "
         f"cruise={result.get('cruise_time_sec')} "
@@ -101,6 +105,7 @@ def print_csv_row(result: dict, header: bool = False) -> None:
         "rep",
         "cmd_distance_m",
         "direction",
+        "move_profile",
         "ok",
         "reported_distance_m",
         "cruise_time_sec",
@@ -135,6 +140,13 @@ def main():
     ap.add_argument("--rep", default="")
 
     ap.add_argument(
+        "--move-profile",
+        choices=["default", "bump_crossing"],
+        default="default",
+        help="Movement profile passed to robot_mobility_motion",
+    )
+
+    ap.add_argument(
         "-b",
         "--brief",
         action="store_true",
@@ -159,6 +171,7 @@ def main():
         distance_m=args.distance,
         trial=args.trial,
         rep=args.rep,
+        move_profile=args.move_profile,
     )
 
     if args.csv:

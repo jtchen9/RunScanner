@@ -61,6 +61,7 @@ def _save_state(state: Dict[str, Any]) -> None:
         encoding="utf-8",
     )
 
+
 def _append_event(event: str, data: Dict[str, Any]) -> None:
     try:
         row = {
@@ -186,6 +187,17 @@ def _parse_signed_angle(args: Dict[str, Any], field_name: str) -> Tuple[bool, fl
         return False, 0.0, f"BAD_COMMAND_ARGS missing_or_invalid {field_name}"
 
 
+def _parse_move_profile(args: Dict[str, Any]) -> Tuple[bool, str, str]:
+    profile = str(args.get("move_profile") or "default").strip().lower()
+    if not profile:
+        profile = "default"
+
+    if profile not in {"default", "bump_crossing"}:
+        return False, "default", f"BAD_COMMAND_ARGS unsupported move_profile={profile}"
+
+    return True, profile, ""
+
+
 def _zero_small_angle(angle_deg: float) -> float:
     try:
         a = float(angle_deg)
@@ -211,8 +223,14 @@ def _run_signed_turn(angle_deg: float) -> Tuple[bool, str]:
     return True, "turn_noop near_zero_angle"
 
 
-def _run_move_direction(forward: bool, distance_m: float) -> Tuple[bool, str]:
-    return move_forward(distance_m) if forward else move_backward(distance_m)
+def _run_move_direction(
+    forward: bool,
+    distance_m: float,
+    move_profile: str = "default",
+) -> Tuple[bool, str]:
+    if forward:
+        return move_forward(distance_m, move_profile=move_profile)
+    return move_backward(distance_m, move_profile=move_profile)
 
 
 def _finalize_with_location() -> Tuple[bool, str]:
@@ -289,6 +307,7 @@ def _execute_turn_move_turn(
     pre_angle: float,
     distance_m: float,
     post_angle: float,
+    move_profile: str = "default",
 ) -> Tuple[bool, str]:
     with _LOCK:
         if _is_busy():
@@ -310,7 +329,11 @@ def _execute_turn_move_turn(
         time.sleep(TURN_MOVE_TURN_GAP_SEC)
 
         # 2) move
-        ok_move, move_detail = _run_move_direction(forward=forward, distance_m=distance_m)       
+        ok_move, move_detail = _run_move_direction(
+            forward=forward,
+            distance_m=distance_m,
+            move_profile=move_profile,
+        )       
         if not ok_move:
             if move_detail.startswith("COLLISION_BLOCKED_AT_START"):
                 err_code = "COLLISION_BLOCKED_AT_START"
@@ -353,7 +376,8 @@ def _execute_turn_move_turn(
             f"turn_move_turn_{direction}_done "
             f"pre_angle={pre_angle:.3f} "
             f"distance_m={distance_m:.3f} "
-            f"post_angle={post_angle:.3f}"
+            f"post_angle={post_angle:.3f} "
+            f"move_profile={move_profile}"
         )
 
     except Exception as e:
@@ -391,6 +415,10 @@ def exec_mobility_turn_move_turn_forward(args: Dict[str, Any]) -> Tuple[bool, st
     if not ok_post:
         return _fail_immediate("BAD_COMMAND_ARGS", detail_post)
 
+    ok_profile, move_profile, detail_profile = _parse_move_profile(args)
+    if not ok_profile:
+        return _fail_immediate("BAD_COMMAND_ARGS", detail_profile)
+
     pre_angle = _zero_small_angle(pre_angle)
     post_angle = _zero_small_angle(post_angle)
 
@@ -401,6 +429,7 @@ def exec_mobility_turn_move_turn_forward(args: Dict[str, Any]) -> Tuple[bool, st
         pre_angle=pre_angle,
         distance_m=distance_m,
         post_angle=post_angle,
+        move_profile=move_profile,
     )
 
 
@@ -417,6 +446,10 @@ def exec_mobility_turn_move_turn_backward(args: Dict[str, Any]) -> Tuple[bool, s
     if not ok_post:
         return _fail_immediate("BAD_COMMAND_ARGS", detail_post)
 
+    ok_profile, move_profile, detail_profile = _parse_move_profile(args)
+    if not ok_profile:
+        return _fail_immediate("BAD_COMMAND_ARGS", detail_profile)
+
     pre_angle = _zero_small_angle(pre_angle)
     post_angle = _zero_small_angle(post_angle)
 
@@ -427,6 +460,7 @@ def exec_mobility_turn_move_turn_backward(args: Dict[str, Any]) -> Tuple[bool, s
         pre_angle=pre_angle,
         distance_m=distance_m,
         post_angle=post_angle,
+        move_profile=move_profile,
     )
 
 

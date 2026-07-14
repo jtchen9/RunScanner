@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# python3 robot_mobility_tmt_calibration.py --pre 90 --distance 0.5 --post -90 -b
+# python3 robot_mobility_tmt_calibration.py --pre 90 --distance 0.5 --post -90 --move-profile bump_crossing -b
 import argparse
 import json
 import re
@@ -57,27 +57,29 @@ def run_turn(angle_deg: float):
     }
 
 
-def run_move(direction: str, distance_m: float):
+def run_move(direction: str, distance_m: float, move_profile: str = "default"):
     if direction == "forward":
-        ok, detail = move_forward(distance_m)
+        ok, detail = move_forward(distance_m, move_profile=move_profile)
     elif direction == "backward":
-        ok, detail = move_backward(distance_m)
+        ok, detail = move_backward(distance_m, move_profile=move_profile)
     else:
         return False, {
             "direction": direction,
             "distance_m": distance_m,
+            "move_profile": move_profile,
             "detail": "BAD_COMMAND_ARGS direction must be forward/backward",
         }
 
     return ok, {
         "direction": direction,
         "distance_m": distance_m,
+        "move_profile": move_profile,
         "detail": detail,
     }
 
 
 def run_tmt(pre_angle: float, distance_m: float, post_angle: float,
-            direction: str, gap_sec: float):
+            direction: str, gap_sec: float, move_profile: str = "default"):
     result = {
         "ok": False,
         "time": datetime.now().isoformat(timespec="seconds"),
@@ -86,6 +88,7 @@ def run_tmt(pre_angle: float, distance_m: float, post_angle: float,
         "post_angle_deg": post_angle,
         "direction": direction,
         "gap_sec": gap_sec,
+        "move_profile": move_profile,
         "pre_turn": None,
         "move": None,
         "post_turn": None,
@@ -101,7 +104,7 @@ def run_tmt(pre_angle: float, distance_m: float, post_angle: float,
 
     time.sleep(gap_sec)
 
-    ok_move, move = run_move(direction, distance_m)
+    ok_move, move = run_move(direction, distance_m, move_profile=move_profile)
     result["move"] = move
     if not ok_move:
         result["failed_stage"] = "move"
@@ -131,6 +134,7 @@ def print_brief(r: dict):
         f"pre={r.get('pre_angle_deg')} "
         f"pre_actual={pre.get('actual_turn_deg')} "
         f"dist={r.get('distance_m')} "
+        f"profile={r.get('move_profile')} "
         f"post={r.get('post_angle_deg')} "
         f"post_actual={post.get('actual_turn_deg')} "
         f"failed={r.get('failed_stage') or '-'}"
@@ -144,6 +148,12 @@ def main():
     ap.add_argument("--post", type=float, required=True)
     ap.add_argument("--direction", choices=["forward", "backward"], default="forward")
     ap.add_argument("--gap-sec", type=float, default=0.3)
+    ap.add_argument(
+        "--move-profile",
+        choices=["default", "bump_crossing"],
+        default="default",
+        help="Movement profile passed to robot_mobility_motion during the move stage",
+    )
     ap.add_argument("-b", "--brief", action="store_true")
     args = ap.parse_args()
 
@@ -153,6 +163,7 @@ def main():
         post_angle=args.post,
         direction=args.direction,
         gap_sec=args.gap_sec,
+        move_profile=args.move_profile,
     )
 
     if args.brief:

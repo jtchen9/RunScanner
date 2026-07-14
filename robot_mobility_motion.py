@@ -39,9 +39,15 @@ BUS = 1
 # =========================================================
 MOVE_KICK_SPEED = 40
 MOVE_CRUISE_SPEED = 25
-# MOVE_KICK_SPEED = 50
-# MOVE_CRUISE_SPEED = 50
+MOVE_BUMP_CROSSING_CRUISE_SPEED = 50
 MOVE_KICK_TIME_SEC = 0.35
+
+MOVE_PROFILE_DEFAULT = "default"
+MOVE_PROFILE_BUMP_CROSSING = "bump_crossing"
+SUPPORTED_MOVE_PROFILES = {
+    MOVE_PROFILE_DEFAULT,
+    MOVE_PROFILE_BUMP_CROSSING,
+}
 
 # placeholder: 10 sec per meter at current cruise speed
 MOVE_SEC_PER_METER = 10.0 / 1.0
@@ -112,9 +118,32 @@ def _clamp_speed(v: float) -> int:
     return int(max(0, min(100, round(v))))
 
 
-def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
+def _normalize_move_profile(move_profile: str | None) -> Tuple[bool, str, str]:
+    profile = str(move_profile or MOVE_PROFILE_DEFAULT).strip().lower()
+    if not profile:
+        profile = MOVE_PROFILE_DEFAULT
+
+    if profile not in SUPPORTED_MOVE_PROFILES:
+        return False, MOVE_PROFILE_DEFAULT, f"BAD_COMMAND_ARGS unsupported move_profile={profile}"
+
+    return True, profile, ""
+
+
+def _move_cruise_speed_for_profile(move_profile: str) -> int:
+    if move_profile == MOVE_PROFILE_BUMP_CROSSING:
+        return MOVE_BUMP_CROSSING_CRUISE_SPEED
+    return MOVE_CRUISE_SPEED
+
+
+def _run_move(forward: bool, distance_m: float, move_profile: str | None = None) -> Tuple[bool, str]:
     if distance_m < MIN_MOVE_DISTANCE_M or distance_m > MAX_MOVE_DISTANCE_M:
         return False, f"BAD_COMMAND_ARGS distance_m={distance_m}"
+
+    ok_profile, profile, profile_detail = _normalize_move_profile(move_profile)
+    if not ok_profile:
+        return False, profile_detail
+
+    cruise_speed = _move_cruise_speed_for_profile(profile)
 
     ok, m, detail = _motor_begin()
     if not ok:
@@ -201,14 +230,14 @@ def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
                 dt = t_now - t_prev
                 t_prev = t_now
 
-                apply_forward_heading_hold(MOVE_CRUISE_SPEED, dt)
+                apply_forward_heading_hold(cruise_speed, dt)
 
                 time.sleep(step)
                 elapsed += step
 
         else:
-            m.motor_movement([m.M1], m.CW,  MOVE_CRUISE_SPEED)
-            m.motor_movement([m.M2], m.CCW, MOVE_CRUISE_SPEED)
+            m.motor_movement([m.M1], m.CW,  cruise_speed)
+            m.motor_movement([m.M2], m.CCW, cruise_speed)
             _sleep_checked(cruise_time)
 
         _safe_stop(m)
@@ -220,6 +249,8 @@ def _run_move(forward: bool, distance_m: float) -> Tuple[bool, str]:
             f"motor_distance_m={motor_distance_m:.3f} "
             f"kick_time={MOVE_KICK_TIME_SEC:.3f} "
             f"cruise_time={cruise_time:.3f} "
+            f"move_profile={profile} "
+            f"cruise_speed={cruise_speed} "
             f"heading_hold_enabled={HEADING_HOLD_ENABLED} "
             f"final_yaw_deg={yaw_deg:.3f} "
             f"max_abs_yaw_deg={max_abs_yaw_deg:.3f}"
@@ -315,12 +346,12 @@ def _run_turn(left: bool, angle_deg: float) -> Tuple[bool, str]:
         return False, f"TURN_EXEC_FAIL {e}"
 
 
-def move_forward(distance_m: float) -> Tuple[bool, str]:
-    return _run_move(forward=True, distance_m=distance_m)
+def move_forward(distance_m: float, move_profile: str | None = None) -> Tuple[bool, str]:
+    return _run_move(forward=True, distance_m=distance_m, move_profile=move_profile)
 
 
-def move_backward(distance_m: float) -> Tuple[bool, str]:
-    return _run_move(forward=False, distance_m=distance_m)
+def move_backward(distance_m: float, move_profile: str | None = None) -> Tuple[bool, str]:
+    return _run_move(forward=False, distance_m=distance_m, move_profile=move_profile)
 
 
 def turn_left(angle_deg: float) -> Tuple[bool, str]:
