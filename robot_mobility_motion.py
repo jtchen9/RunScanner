@@ -29,21 +29,20 @@ BUS = 1
 #   CW  = forward
 #   CCW = backward
 #
-# Turning motor directions:
-# physical left / CCW turn  => M1 CCW, M2 CCW
-# physical right / CW turn  => M1 CW,  M2 CW
+# Turning motor/gyro primitives:
+# _run_turn(left=True) and _run_turn(left=False) are low-level motor/gyro
+# patterns. On this robot's current wiring/motor-driver convention, the public
+# physical names are opposite to the primitive's left flag.
 #
-# IMU convention on this mounting:
-# physical left / CCW turn  => gz/yaw becomes NEGATIVE
-# physical right / CW turn  => gz/yaw becomes POSITIVE
+# Important:
+# - Keep GZ_BIAS unchanged. GZ_BIAS is the stationary sensor offset.
+# - Do not change the gyro integration or target-yaw logic here.
+# - Public turn_left()/turn_right() below adapt the physical command convention
+#   expected by NMS/world geometry.
 #
-# Public signed command convention expected by NMS/world geometry:
+# Public command convention expected by NMS/world geometry:
 # positive angle_deg => physical left / CCW turn
 # negative angle_deg => physical right / CW turn
-#
-# Therefore, do NOT change GZ_BIAS for this convention fix. GZ_BIAS is the
-# stationary sensor offset. The sign conversion belongs in the public signed
-# command wrapper, not in the gyro-bias calibration.
 
 # =========================================================
 # Forward/backward calibration placeholders
@@ -369,23 +368,27 @@ def move_backward(distance_m: float, move_profile: str | None = None) -> Tuple[b
 def turn_left(angle_deg: float) -> Tuple[bool, str]:
     """Physical left / CCW turn.
 
-    Note:
-    - Because of the current IMU mounting, this physical CCW turn integrates
-      to negative yaw internally.
-    - This function name remains physical/semantic and is not sign-adapted.
+    The low-level _run_turn(left=...) primitive is opposite to the public
+    physical direction on this robot wiring, so use left=False here.
+
+    This preserves the NMS/world convention:
+        positive signed command angle => physical left / CCW.
     """
-    return _run_turn(left=True, angle_deg=angle_deg)
+    ok, detail = _run_turn(left=False, angle_deg=angle_deg)
+    return ok, f"physical_turn_left_ccw {detail}"
 
 
 def turn_right(angle_deg: float) -> Tuple[bool, str]:
     """Physical right / CW turn.
 
-    Note:
-    - Because of the current IMU mounting, this physical CW turn integrates
-      to positive yaw internally.
-    - This function name remains physical/semantic and is not sign-adapted.
+    The low-level _run_turn(left=...) primitive is opposite to the public
+    physical direction on this robot wiring, so use left=True here.
+
+    This preserves the NMS/world convention:
+        negative signed command angle => physical right / CW.
     """
-    return _run_turn(left=False, angle_deg=angle_deg)
+    ok, detail = _run_turn(left=True, angle_deg=angle_deg)
+    return ok, f"physical_turn_right_cw {detail}"
 
 
 def turn_signed(angle_deg: float) -> Tuple[bool, str]:
