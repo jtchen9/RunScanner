@@ -61,7 +61,7 @@ SUPPORTED_MOVE_PROFILES = {
 }
 
 # placeholder: 10 sec per meter at current cruise speed
-MOVE_SEC_PER_METER = 10.0 / 1.0
+MOVE_SEC_PER_METER = 8.0 / 1.0
 
 HEADING_HOLD_ENABLED = True
 HEADING_HOLD_REQUIRE_IMU = True
@@ -79,7 +79,8 @@ TURN_DT = 0.02
 TURN_STOP_MARGIN_DEG = 0.0
 
 # Measured stationary bias of gz
-GZ_BIAS = 0.41616
+# GZ_BIAS = 0.41616  # Charlie
+GZ_BIAS = 0.3 # Delta, 9.0V
 
 # =========================================================
 # Limits / guards
