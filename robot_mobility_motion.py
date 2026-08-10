@@ -79,8 +79,8 @@ TURN_DT = 0.02
 TURN_STOP_MARGIN_DEG = 0.0
 
 # Measured stationary bias of gz
-# GZ_BIAS = 0.41616  # Charlie
-GZ_BIAS = 0.3 # Delta, 9.0V
+GZ_BIAS = 0.41616  # Charlie
+# GZ_BIAS = 0.3 # Delta, 9.0V
 
 # =========================================================
 # Limits / guards
