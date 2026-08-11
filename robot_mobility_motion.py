@@ -78,6 +78,14 @@ TURN_KICK_TIME_SEC = 0.3
 TURN_DT = 0.02
 TURN_STOP_MARGIN_DEG = 0.0
 
+# Direct turns smaller than this threshold can reach their target during the
+# fixed kick, before _run_turn() begins checking its target.  Build those
+# turns from two calibrated large turns instead.
+SMALL_TURN_COMPOSITE_THRESHOLD_DEG = 30.0
+SMALL_TURN_COMPOSITE_ANCHOR_DEG = 90.0
+SMALL_TURN_BETWEEN_LEGS_SEC = 1.0
+SMALL_TURN_FINAL_SETTLE_SEC = 0.5
+
 # Measured stationary bias of gz
 # GZ_BIAS = 0.41616  # Charlie
 GZ_BIAS = 0.3 # Delta, 9.0V
@@ -392,6 +400,74 @@ def turn_right(angle_deg: float) -> Tuple[bool, str]:
     return ok, f"physical_turn_right_cw {detail}"
 
 
+def _run_composite_signed_turn(angle_deg: float) -> Tuple[bool, str]:
+    """Execute a small signed turn as two calibrated large opposite turns.
+
+    Positive request:
+        +anchor, then -(anchor - requested)
+
+    Negative request:
+        -anchor, then +(anchor - abs(requested))
+
+    The public sign convention is preserved.  The NMS and command payload do
+    not need to know that the robot used two physical turns internally.
+    """
+    requested_abs = abs(angle_deg)
+    second_leg_abs = SMALL_TURN_COMPOSITE_ANCHOR_DEG - requested_abs
+
+    if second_leg_abs < MIN_TURN_ANGLE_DEG:
+        return False, (
+            "COMPOSITE_TURN_CONFIG_FAIL "
+            f"angle_deg={angle_deg:.3f} "
+            f"anchor_deg={SMALL_TURN_COMPOSITE_ANCHOR_DEG:.3f} "
+            f"second_leg_deg={second_leg_abs:.3f}"
+        )
+
+    if angle_deg > 0.0:
+        first_leg_signed = SMALL_TURN_COMPOSITE_ANCHOR_DEG
+        second_leg_signed = -second_leg_abs
+        first_turn = turn_left
+        second_turn = turn_right
+    else:
+        first_leg_signed = -SMALL_TURN_COMPOSITE_ANCHOR_DEG
+        second_leg_signed = second_leg_abs
+        first_turn = turn_right
+        second_turn = turn_left
+
+    ok_first, detail_first = first_turn(SMALL_TURN_COMPOSITE_ANCHOR_DEG)
+    if not ok_first:
+        return False, (
+            "COMPOSITE_TURN_LEG1_FAIL "
+            f"requested_angle_deg={angle_deg:.3f} "
+            f"leg1_angle_deg={first_leg_signed:.3f} "
+            f"detail={detail_first}"
+        )
+
+    _sleep_checked(SMALL_TURN_BETWEEN_LEGS_SEC)
+
+    ok_second, detail_second = second_turn(second_leg_abs)
+    if not ok_second:
+        return False, (
+            "COMPOSITE_TURN_LEG2_FAIL "
+            f"requested_angle_deg={angle_deg:.3f} "
+            f"leg1_angle_deg={first_leg_signed:.3f} "
+            f"leg2_angle_deg={second_leg_signed:.3f} "
+            f"leg1_detail={detail_first} "
+            f"leg2_detail={detail_second}"
+        )
+
+    _sleep_checked(SMALL_TURN_FINAL_SETTLE_SEC)
+
+    return True, (
+        "composite_small_turn_done "
+        f"requested_angle_deg={angle_deg:.3f} "
+        f"leg1_angle_deg={first_leg_signed:.3f} "
+        f"leg2_angle_deg={second_leg_signed:.3f} "
+        f"leg1_detail={detail_first} "
+        f"leg2_detail={detail_second}"
+    )
+
+
 def turn_signed(angle_deg: float) -> Tuple[bool, str]:
     """Turn using the NMS/world signed-angle convention.
 
@@ -415,6 +491,10 @@ def turn_signed(angle_deg: float) -> Tuple[bool, str]:
 
     if abs(angle) > MAX_TURN_ANGLE_DEG:
         return False, f"BAD_COMMAND_ARGS angle_deg={angle}"
+
+    if abs(angle) < SMALL_TURN_COMPOSITE_THRESHOLD_DEG:
+        ok, detail = _run_composite_signed_turn(angle)
+        return ok, f"signed_composite {detail}"
 
     if angle > 0:
         ok, detail = turn_left(abs(angle))
