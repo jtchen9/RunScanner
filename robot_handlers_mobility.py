@@ -9,8 +9,7 @@ from typing import Any, Dict, Tuple
 from robot_mobility_motion import (
     move_forward,
     move_backward,
-    turn_left,
-    turn_right,
+    turn_signed,
 )
 
 PYTHON = "/usr/bin/python3"
@@ -214,13 +213,12 @@ def _run_signed_turn(angle_deg: float) -> Tuple[bool, str]:
     """
     angle_deg = _zero_small_angle(angle_deg)
 
-    if angle_deg > 0:
-        return turn_left(abs(angle_deg))
+    if angle_deg == 0.0:
+        return True, "turn_noop near_zero_angle"
 
-    if angle_deg < 0:
-        return turn_right(abs(angle_deg))
-
-    return True, "turn_noop near_zero_angle"
+    # Direct/composite selection belongs to the robot motion layer.  The
+    # command handler passes through the original signed request unchanged.
+    return turn_signed(angle_deg)
 
 
 def _run_move_direction(
