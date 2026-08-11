@@ -7,8 +7,8 @@ import time
 # =========================
 imu = ICM20948()
 
-# Measured stationary bias of gz
-gz_bias = -0.313663507
+# Match Delta's deployed robot_mobility_motion.py at 9.0 V.
+gz_bias = 0.3
 
 # =========================
 # Motor HAT setup
@@ -28,9 +28,14 @@ print("Motor begin status:", m.begin())
 #   CW  = forward
 #   CCW = backward
 #
-# Therefore for LEFT TURN:
-#   right side forward  -> M1 CCW
-#   left side backward  -> M2 CCW
+# This diagnostic reproduces the exact low-level path used by:
+#
+#     turn_signed(+8.1)
+#       -> turn_left(8.1)
+#       -> _run_turn(left=False, angle_deg=8.1)
+#
+# In Delta's deployed production mapping, left=False drives both motors CW
+# and expects positive integrated yaw.
 #
 # Also verified experimentally:
 #   motor-driven left turn => yaw becomes NEGATIVE
@@ -38,11 +43,11 @@ print("Motor begin status:", m.begin())
 # =========================
 # Turn parameters
 # =========================
-TARGET_YAW = -90.0       # right turn target
-KICK_SPEED = 60
-CRUISE_SPEED = 50
-KICK_TIME = 0.35
-DT = 0.02                # ~50 Hz loop
+TARGET_YAW = 8.1
+KICK_SPEED = 50
+CRUISE_SPEED = 40
+KICK_TIME = 0.3
+DT = 0.02                # matches TURN_DT in production
 
 # Optional small margin to stop a bit early if you want to reduce overshoot
 # For now keep zero and observe behavior
@@ -59,13 +64,17 @@ def read_yaw_rate():
 # Main
 # =========================
 yaw_deg = 0.0
+kick_end_yaw_deg = 0.0
+target_first_crossed_during_kick = False
+target_first_crossing_elapsed_sec = None
+target_first_crossing_yaw_deg = None
 
 try:
     # Safety: always stop first
     m.motor_stop(m.ALL)
     time.sleep(1.0)
 
-    print("Starting left turn in 2 seconds...")
+    print("Starting production-equivalent turn_signed(+8.1) in 2 seconds...")
     time.sleep(2.0)
 
     # IMPORTANT:
@@ -74,8 +83,8 @@ try:
     t_prev = time.time()
 
     # Kick phase
-    m.motor_movement([m.M1], m.CCW, KICK_SPEED)
-    m.motor_movement([m.M2], m.CCW, KICK_SPEED)
+    m.motor_movement([m.M1], m.CW, KICK_SPEED)
+    m.motor_movement([m.M2], m.CW, KICK_SPEED)
 
     t_kick_start = time.time()
     while True:
@@ -88,14 +97,26 @@ try:
 
         print(f"[KICK]   dt={dt:6.3f}  yaw_rate={yaw_rate:8.3f}  yaw_deg={yaw_deg:8.3f}")
 
+        # Observation only: production does not stop here when the target is
+        # crossed. Preserve that behavior so this test measures it exactly.
+        if (
+            not target_first_crossed_during_kick
+            and yaw_deg >= (TARGET_YAW - STOP_MARGIN)
+        ):
+            target_first_crossed_during_kick = True
+            target_first_crossing_elapsed_sec = t_now - t_kick_start
+            target_first_crossing_yaw_deg = yaw_deg
+
         if (t_now - t_kick_start) >= KICK_TIME:
             break
 
         time.sleep(DT)
 
+    kick_end_yaw_deg = yaw_deg
+
     # Cruise phase
-    m.motor_movement([m.M1], m.CCW, CRUISE_SPEED)
-    m.motor_movement([m.M2], m.CCW, CRUISE_SPEED)
+    m.motor_movement([m.M1], m.CW, CRUISE_SPEED)
+    m.motor_movement([m.M2], m.CW, CRUISE_SPEED)
 
     while True:
         t_now = time.time()
@@ -107,12 +128,21 @@ try:
 
         print(f"[CRUISE] dt={dt:6.3f}  yaw_rate={yaw_rate:8.3f}  yaw_deg={yaw_deg:8.3f}")
 
-        # Left turn is negative
-        if yaw_deg <= (TARGET_YAW + STOP_MARGIN):
+        # Match production _run_turn(left=False): positive yaw target.
+        if yaw_deg >= (TARGET_YAW - STOP_MARGIN):
             break
 
         time.sleep(DT)
 
 finally:
     m.motor_stop(m.ALL)
+    print(f"Target yaw                  = {TARGET_YAW:.3f} deg")
+    print(f"Yaw at end of fixed kick    = {kick_end_yaw_deg:.3f} deg")
+    print(f"Target crossed during kick  = {target_first_crossed_during_kick}")
+    if target_first_crossing_elapsed_sec is not None:
+        print(
+            "First kick crossing          = "
+            f"{target_first_crossing_yaw_deg:.3f} deg at "
+            f"{target_first_crossing_elapsed_sec:.3f} sec"
+        )
     print(f"Stopped at yaw = {yaw_deg:.3f} deg")
