@@ -31,7 +31,7 @@ TURN_DT_SEC = 0.02
 TURN_STOP_MARGIN_DEG = 0.0
 
 # Composite experiment settings.  Change only these for the first test series.
-REQUESTED_NET_ANGLE_DEG = 8.1
+REQUESTED_NET_ANGLE_DEG = -8.1
 ANCHOR_ANGLE_DEG = 90.0
 SETTLE_OBSERVE_SEC = 0.5
 BETWEEN_LEGS_PAUSE_SEC = 0.5
