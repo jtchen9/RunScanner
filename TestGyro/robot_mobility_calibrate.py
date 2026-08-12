@@ -7,9 +7,8 @@ The operator runs this script once and enters only:
 * signed lateral shift in centimetres (right positive);
 * whether the current measurement should be kept or retried.
 
-This first version writes a per-robot calibration registry but does not change
-the production loader.  Production continues using its existing configuration
-until the registry integration is reviewed separately.
+Accepted results are written to the per-robot production calibration registry.
+The motion layer reads the latest PASS result for its own scanner name.
 """
 
 from __future__ import annotations
@@ -175,32 +174,32 @@ def _measure_stationary_gz_bias() -> Tuple[float, float, int]:
     return bias, spread, len(samples)
 
 
-def _execute_raw(raw_motor_distance_m: float) -> Tuple[bool, str]:
-    original = motion.apply_motor_move_calibration
+def _execute_raw(
+    raw_motor_distance_m: float,
+    gz_bias: float,
+) -> Tuple[bool, str]:
     requested = max(raw_motor_distance_m, motion.MIN_MOVE_DISTANCE_M)
-    motion.apply_motor_move_calibration = lambda _distance: raw_motor_distance_m
-    try:
-        return motion.move_forward(requested)
-    finally:
-        motion.apply_motor_move_calibration = original
+    return motion._run_move(
+        forward=True,
+        distance_m=requested,
+        calibration_gz_bias=gz_bias,
+        motor_distance_override=raw_motor_distance_m,
+    )
 
 
 def _execute_candidate_calibrated(
     desired_distance_m: float,
     cmd_a: float,
     cmd_b: float,
+    gz_bias: float,
 ) -> Tuple[bool, str]:
-    original = motion.apply_motor_move_calibration
-
-    def candidate_calibration(distance_m: float) -> float:
-        value = cmd_a * float(distance_m) + cmd_b
-        return max(0.0, value)
-
-    motion.apply_motor_move_calibration = candidate_calibration
-    try:
-        return motion.move_forward(desired_distance_m)
-    finally:
-        motion.apply_motor_move_calibration = original
+    motor_distance = max(0.0, cmd_a * float(desired_distance_m) + cmd_b)
+    return motion._run_move(
+        forward=True,
+        distance_m=desired_distance_m,
+        calibration_gz_bias=gz_bias,
+        motor_distance_override=motor_distance,
+    )
 
 
 def _measure_one(
@@ -224,7 +223,7 @@ def _measure_one(
     time.sleep(3.0)
 
     if raw_motor_distance_m is not None:
-        ok, detail = _execute_raw(raw_motor_distance_m)
+        ok, detail = _execute_raw(raw_motor_distance_m, gz_bias)
     else:
         if desired_distance_m is None or cmd_a is None or cmd_b is None:
             raise RuntimeError("candidate verification parameters are incomplete")
@@ -232,6 +231,7 @@ def _measure_one(
             desired_distance_m,
             cmd_a,
             cmd_b,
+            gz_bias,
         )
 
     row: Dict[str, object] = {
@@ -349,7 +349,6 @@ def _first_time_gz_bias(
     candidates: List[Tuple[float, float]] = []
     biases = [stationary_bias + offset for offset in INITIAL_GZ_BIAS_OFFSETS]
     for index, bias in enumerate(biases):
-        motion.GZ_BIAS = bias
         next_text = (
             f"GZ_BIAS {biases[index + 1]:.6f}, "
             f"raw {INITIAL_GZ_TEST_DISTANCE_M:.2f} m"
@@ -472,7 +471,7 @@ def _write_registry(
         "calibrated_at_utc": _utc_now(),
         "source": str(ACTIVE_CSV_PATH),
         "quality": quality,
-        "production_loader_enabled": False,
+        "production_loader_enabled": True,
     }
 
     temporary = REGISTRY_PATH.with_suffix(".json.tmp")
@@ -512,8 +511,6 @@ def _run_session(scanner: str) -> str:
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError("previous registry GZ_BIAS is invalid") from exc
         print(f"Using previous GZ_BIAS: {gz_bias:.9f}")
-    motion.GZ_BIAS = gz_bias
-
     raw_points: List[Tuple[float, float]] = []
     lateral_points: List[float] = []
     for index, raw_distance in enumerate(RAW_SEQUENCE_M):
@@ -625,7 +622,7 @@ def _run_session(scanner: str) -> str:
     if action == "update":
         _write_registry(scanner, gz_bias, fit, quality)
         print(f"Registry updated:         {REGISTRY_PATH}")
-        print("Production loader:        not enabled in this interface trial")
+        print("Production loader:        enabled for the next motion primitive")
     elif action == "keep":
         print("Previous registry entry retained.")
     return action
