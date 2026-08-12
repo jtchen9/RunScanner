@@ -10,6 +10,10 @@
         "cmd_b": -0.08664651997355753
       },
       "gz_bias": -0.3753623188405797,
+      "short_move": {
+        "kick_distance_m": 0.06,
+        "skip_threshold_m": 0.03
+      },
       "production_loader_enabled": true,
       "quality": {
         "checks": {
@@ -40,6 +44,10 @@
         "cmd_b": -0.05996700350587745
       },
       "gz_bias": 0.3067374709591769,
+      "short_move": {
+        "kick_distance_m": 0.08,
+        "skip_threshold_m": 0.04
+      },
       "production_loader_enabled": true,
       "quality": {
         "checks": {

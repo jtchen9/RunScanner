@@ -26,6 +26,8 @@ class MobilityCalibrationSnapshot:
     cmd_a: float
     cmd_b: float
     source: str
+    kick_distance_m: float = 0.0
+    skip_threshold_m: float = 0.0
     calibrated_at_utc: str = ""
     warning: str = ""
 
@@ -39,7 +41,9 @@ class MobilityCalibrationSnapshot:
             f"calibration_scanner={self.scanner or 'unknown'} "
             f"calibration_gz_bias={self.gz_bias:.9f} "
             f"calibration_cmd_a={self.cmd_a:.12f} "
-            f"calibration_cmd_b={self.cmd_b:.12f}"
+            f"calibration_cmd_b={self.cmd_b:.12f} "
+            f"calibration_kick_distance_m={self.kick_distance_m:.3f} "
+            f"calibration_skip_threshold_m={self.skip_threshold_m:.3f}"
         )
         if self.warning:
             compact_warning = "_".join(self.warning.split())
@@ -71,6 +75,8 @@ def fallback_snapshot(
         cmd_a=float(cmd_a),
         cmd_b=float(cmd_b),
         source="fallback",
+        kick_distance_m=0.0,
+        skip_threshold_m=0.0,
         warning=warning,
     )
 
@@ -112,12 +118,36 @@ def load_mobility_calibration(
         if cmd_a <= 0.0:
             raise ValueError("cmd_a must be positive")
 
+        short_move = entry.get("short_move")
+        if short_move is None:
+            kick_distance_m = 0.0
+            skip_threshold_m = 0.0
+        elif isinstance(short_move, dict):
+            kick_distance_m = _finite_number(
+                short_move.get("kick_distance_m"),
+                "kick_distance_m",
+            )
+            skip_threshold_m = _finite_number(
+                short_move.get("skip_threshold_m"),
+                "skip_threshold_m",
+            )
+            if kick_distance_m < 0.0:
+                raise ValueError("kick_distance_m must not be negative")
+            if skip_threshold_m < 0.0:
+                raise ValueError("skip_threshold_m must not be negative")
+            if skip_threshold_m > kick_distance_m:
+                raise ValueError("skip_threshold_m must not exceed kick_distance_m")
+        else:
+            raise ValueError("short_move must be an object")
+
         return MobilityCalibrationSnapshot(
             scanner=scanner,
             gz_bias=gz_bias,
             cmd_a=cmd_a,
             cmd_b=cmd_b,
             source="registry",
+            kick_distance_m=kick_distance_m,
+            skip_threshold_m=skip_threshold_m,
             calibrated_at_utc=str(entry.get("calibrated_at_utc") or ""),
         )
     except Exception as exc:

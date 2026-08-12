@@ -49,6 +49,7 @@ MIN_R_SQUARED = 0.995
 MAX_FIT_RMSE_M = 0.05
 MAX_VERIFY_DISTANCE_ERROR_M = 0.05
 MAX_VERIFY_LATERAL_SHIFT_M = 0.05
+DEFAULT_BUCK_VOLTAGE_V = 8.2
 
 CALIBRATION_DIR = SCRIPT_DIR / "calibration"
 ACTIVE_CSV_PATH = CALIBRATION_DIR / "current_calibration.csv"
@@ -448,6 +449,7 @@ def _write_registry(
     gz_bias: float,
     fit: Dict[str, float],
     quality: Dict[str, object],
+    kick_distance_m: float,
 ) -> None:
     registry = _load_registry()
     robots = registry["robots"]
@@ -459,14 +461,24 @@ def _write_registry(
         )
         shutil.copy2(REGISTRY_PATH, backup)
 
+    previous = robots.get(scanner)
+    if isinstance(previous, dict):
+        buck_voltage_v = previous.get("buck_voltage_v", DEFAULT_BUCK_VOLTAGE_V)
+    else:
+        buck_voltage_v = DEFAULT_BUCK_VOLTAGE_V
+
     robots[scanner] = {
-        "buck_voltage_v": 9.0,
+        "buck_voltage_v": buck_voltage_v,
         "gz_bias": gz_bias,
         "distance_model": {
             "actual_a": fit["actual_a"],
             "actual_b": fit["actual_b"],
             "cmd_a": fit["cmd_a"],
             "cmd_b": fit["cmd_b"],
+        },
+        "short_move": {
+            "kick_distance_m": kick_distance_m,
+            "skip_threshold_m": kick_distance_m / 2.0,
         },
         "calibrated_at_utc": _utc_now(),
         "source": str(ACTIVE_CSV_PATH),
@@ -513,6 +525,7 @@ def _run_session(scanner: str) -> str:
         print(f"Using previous GZ_BIAS: {gz_bias:.9f}")
     raw_points: List[Tuple[float, float]] = []
     lateral_points: List[float] = []
+    kick_distance_m: Optional[float] = None
     for index, raw_distance in enumerate(RAW_SEQUENCE_M):
         next_text = (
             f"raw motor distance {RAW_SEQUENCE_M[index + 1]:.2f} m"
@@ -527,6 +540,11 @@ def _run_session(scanner: str) -> str:
         )
         raw_points.append((raw_distance, actual_forward))
         lateral_points.append(actual_lateral)
+        if raw_distance == 0.0:
+            kick_distance_m = actual_forward
+
+    if kick_distance_m is None:
+        raise RuntimeError("accepted kick-only measurement is missing")
 
     fit = _linear_fit(raw_points)
 
@@ -580,6 +598,10 @@ def _run_session(scanner: str) -> str:
                 "cmd_a": fit["cmd_a"],
                 "cmd_b": fit["cmd_b"],
             },
+            "short_move": {
+                "kick_distance_m": kick_distance_m,
+                "skip_threshold_m": kick_distance_m / 2.0,
+            },
         },
         "comparison_with_previous": comparison,
         "session_csv": str(ACTIVE_CSV_PATH),
@@ -598,6 +620,8 @@ def _run_session(scanner: str) -> str:
     print(f"Fit R-squared:           {fit['r_squared']:.6f}")
     print(f"1 m verification error:  {verify_error_m * 100:.2f} cm")
     print(f"1 m lateral shift:       {verify_lateral_m * 100:+.2f} cm")
+    print(f"Kick-only distance:      {kick_distance_m * 100:.2f} cm")
+    print(f"Short-move skip below:   {kick_distance_m * 50:.2f} cm")
     failed = [name for name, ok in checks.items() if not ok]
     if failed:
         print("Failed checks:            " + ", ".join(failed))
@@ -620,7 +644,7 @@ def _run_session(scanner: str) -> str:
 
     action = _prompt_final_action(previous is not None)
     if action == "update":
-        _write_registry(scanner, gz_bias, fit, quality)
+        _write_registry(scanner, gz_bias, fit, quality, kick_distance_m)
         print(f"Registry updated:         {REGISTRY_PATH}")
         print("Production loader:        enabled for the next motion primitive")
     elif action == "keep":

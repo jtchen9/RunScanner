@@ -176,7 +176,7 @@ def _run_move(
     calibration_gz_bias: Optional[float] = None,
     motor_distance_override: Optional[float] = None,
 ) -> Tuple[bool, str]:
-    if distance_m < MIN_MOVE_DISTANCE_M or distance_m > MAX_MOVE_DISTANCE_M:
+    if distance_m <= 0.0 or distance_m > MAX_MOVE_DISTANCE_M:
         return False, f"BAD_COMMAND_ARGS distance_m={distance_m}"
 
     ok_profile, profile, profile_detail = _normalize_move_profile(move_profile)
@@ -185,7 +185,10 @@ def _run_move(
 
     cruise_speed = _move_cruise_speed_for_profile(profile)
     calibration = calibration or _production_calibration_snapshot()
-    if calibration_gz_bias is not None or motor_distance_override is not None:
+    calibration_override_active = (
+        calibration_gz_bias is not None or motor_distance_override is not None
+    )
+    if calibration_override_active:
         calibration = fallback_snapshot(
             scanner=calibration.scanner,
             gz_bias=(
@@ -204,6 +207,23 @@ def _run_move(
             source="calibration_override",
         )
 
+    if (
+        forward
+        and
+        not calibration_override_active
+        and distance_m < calibration.skip_threshold_m
+    ):
+        return True, (
+            "short_move_skipped "
+            f"distance_m={distance_m:.3f} "
+            f"skip_threshold_m={calibration.skip_threshold_m:.3f} "
+            f"expected_residual_m={distance_m:.3f} "
+            f"{calibration.detail()}"
+        )
+
+    if distance_m < MIN_MOVE_DISTANCE_M:
+        return False, f"BAD_COMMAND_ARGS distance_m={distance_m}"
+
     ok, m, detail = _motor_begin()
     if not ok:
         return False, detail
@@ -214,6 +234,7 @@ def _run_move(
         else max(0.0, float(motor_distance_override))
     )
     cruise_time = motor_distance_m * MOVE_SEC_PER_METER
+    move_execution = "kick_only" if motor_distance_m == 0.0 else "kick_plus_cruise"
 
     yaw_deg = 0.0
     max_abs_yaw_deg = 0.0
@@ -308,6 +329,7 @@ def _run_move(
         direction = "forward" if forward else "backward"
         return True, (
             f"{direction}_done "
+            f"move_execution={move_execution} "
             f"distance_m={distance_m:.3f} "
             f"motor_distance_m={motor_distance_m:.3f} "
             f"kick_time={MOVE_KICK_TIME_SEC:.3f} "
