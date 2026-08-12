@@ -5,7 +5,7 @@ The operator runs this script once and enters only:
 
 * measured forward distance in centimetres;
 * signed lateral shift in centimetres (right positive);
-* whether the current measurement should be retried.
+* whether the current measurement should be kept or retried.
 
 This first version writes a per-robot calibration registry but does not change
 the production loader.  Production continues using its existing configuration
@@ -38,6 +38,8 @@ import robot_mobility_motion as motion
 # distance and gradual battery/motor heating.
 RAW_SEQUENCE_M = (1.00, 0.00, 2.00, 0.20, 0.50)
 VERIFY_DISTANCE_M = 1.00
+INITIAL_GZ_TEST_DISTANCE_M = 1.50
+INITIAL_GZ_BIAS_OFFSETS = (0.00, -0.10, 0.10)
 
 STATIONARY_SAMPLE_SEC = 5.0
 STATIONARY_DISCARD_SEC = 1.0
@@ -53,6 +55,7 @@ CALIBRATION_DIR = SCRIPT_DIR / "calibration"
 ACTIVE_CSV_PATH = CALIBRATION_DIR / "current_calibration.csv"
 ARCHIVE_DIR = CALIBRATION_DIR / "archive"
 REGISTRY_PATH = ROBOT_ROOT / "robot_mobility_calibration.json"
+RESULT_PATH = CALIBRATION_DIR / "calibration_result.json"
 
 CSV_FIELDS = (
     "recorded_at_utc",
@@ -75,7 +78,7 @@ def _utc_now() -> str:
 
 
 def _filename_timestamp() -> str:
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
+    return datetime.now().strftime("%Y%m%d-%H%M%S-%f")
 
 
 def _scanner_name() -> str:
@@ -124,17 +127,18 @@ def _prompt_float_cm(prompt: str) -> float:
         return number / 100.0
 
 
-def _prompt_retry() -> bool:
+def _prompt_retry(next_experiment: str) -> bool:
+    print(f"Next experiment: {next_experiment}")
     while True:
         value = input(
-            "Retry this measurement? [y/N] "
-            "(choose N only after repositioning the robot): "
+            "Keep this measurement? [Y/n] "
+            "(choose Y only after repositioning for the next experiment): "
         ).strip().lower()
-        if value in {"", "n", "no"}:
+        if value in {"", "y", "yes"}:
             return False
-        if value in {"y", "yes"}:
+        if value in {"n", "no"}:
             return True
-        print("Enter Y to retry, or N to accept and continue.")
+        print("Enter Y to keep this measurement, or N to discard and retry it.")
 
 
 def _trimmed_mean(values: List[float], fraction: float) -> float:
@@ -208,6 +212,7 @@ def _measure_one(
     desired_distance_m: Optional[float] = None,
     cmd_a: Optional[float] = None,
     cmd_b: Optional[float] = None,
+    next_experiment: str = "calibration summary",
 ) -> Tuple[bool, Optional[Tuple[float, float]]]:
     if raw_motor_distance_m is not None:
         label = f"raw motor distance {raw_motor_distance_m:.2f} m"
@@ -244,7 +249,7 @@ def _measure_one(
 
     if not ok:
         print(f"Movement failed: {detail}")
-        retry = _prompt_retry()
+        retry = _prompt_retry(next_experiment)
         row["accepted"] = False
         _append_row(row)
         if retry:
@@ -255,7 +260,7 @@ def _measure_one(
     actual_lateral_m = _prompt_float_cm(
         "Lateral shift (cm, right positive): "
     )
-    retry = _prompt_retry()
+    retry = _prompt_retry(next_experiment)
 
     row["actual_forward_distance_m"] = actual_forward_m
     row["actual_lateral_shift_m"] = actual_lateral_m
@@ -271,15 +276,18 @@ def _collect_raw_point(
     scanner: str,
     raw_motor_distance_m: float,
     gz_bias: float,
+    next_experiment: str,
+    phase: str = "raw_fit",
 ) -> Tuple[float, float]:
     attempt = 1
     while True:
         retry, measurement = _measure_one(
             scanner=scanner,
-            phase="raw_fit",
+            phase=phase,
             attempt=attempt,
             gz_bias=gz_bias,
             raw_motor_distance_m=raw_motor_distance_m,
+            next_experiment=next_experiment,
         )
         if not retry and measurement is not None:
             return measurement
@@ -325,10 +333,122 @@ def _load_registry() -> Dict[str, object]:
     return data
 
 
+def _previous_entry(registry: Dict[str, object], scanner: str) -> Optional[Dict[str, object]]:
+    robots = registry.get("robots")
+    if not isinstance(robots, dict):
+        return None
+    entry = robots.get(scanner)
+    return entry if isinstance(entry, dict) else None
+
+
+def _first_time_gz_bias(
+    scanner: str,
+    stationary_bias: float,
+) -> float:
+    """Choose the least-drifting of three first-time bias candidates."""
+    candidates: List[Tuple[float, float]] = []
+    biases = [stationary_bias + offset for offset in INITIAL_GZ_BIAS_OFFSETS]
+    for index, bias in enumerate(biases):
+        motion.GZ_BIAS = bias
+        next_text = (
+            f"GZ_BIAS {biases[index + 1]:.6f}, "
+            f"raw {INITIAL_GZ_TEST_DISTANCE_M:.2f} m"
+            if index + 1 < len(biases)
+            else f"raw motor distance {RAW_SEQUENCE_M[0]:.2f} m"
+        )
+        _forward, lateral = _collect_raw_point(
+            scanner=scanner,
+            raw_motor_distance_m=INITIAL_GZ_TEST_DISTANCE_M,
+            gz_bias=bias,
+            next_experiment=next_text,
+            phase="initial_gz_selection",
+        )
+        candidates.append((bias, lateral))
+
+    selected_bias, _selected_lateral = min(
+        candidates,
+        key=lambda item: (abs(item[1]), abs(item[0] - stationary_bias)),
+    )
+    print(f"Initial GZ_BIAS selected: {selected_bias:.9f}")
+    return selected_bias
+
+
+def _percent_change(current: float, previous: float) -> Optional[float]:
+    if previous == 0.0:
+        return None
+    return 100.0 * (current - previous) / abs(previous)
+
+
+def _comparison(
+    previous: Optional[Dict[str, object]],
+    gz_bias: float,
+    fit: Dict[str, float],
+) -> Dict[str, object]:
+    if previous is None:
+        return {"available": False, "major_difference": False}
+    old_model = previous.get("distance_model")
+    if not isinstance(old_model, dict):
+        old_model = {}
+    try:
+        old_gz = float(previous.get("gz_bias"))
+    except (TypeError, ValueError):
+        old_gz = math.nan
+
+    values: Dict[str, object] = {
+        "available": True,
+        "previous_gz_bias": old_gz,
+        "gz_bias_change": gz_bias - old_gz if math.isfinite(old_gz) else None,
+    }
+    major = math.isfinite(old_gz) and abs(gz_bias - old_gz) >= 0.05
+    for name in ("actual_a", "actual_b", "cmd_a", "cmd_b"):
+        try:
+            old_value = float(old_model[name])
+        except (KeyError, TypeError, ValueError):
+            values[f"previous_{name}"] = None
+            values[f"{name}_change_percent"] = None
+            continue
+        values[f"previous_{name}"] = old_value
+        change = _percent_change(fit[name], old_value)
+        values[f"{name}_change_percent"] = change
+        if name in {"actual_a", "cmd_a"} and change is not None and abs(change) >= 5.0:
+            major = True
+        if name in {"actual_b", "cmd_b"} and abs(fit[name] - old_value) >= 0.03:
+            major = True
+    values["major_difference"] = major
+    return values
+
+
+def _write_result(result: Dict[str, object]) -> None:
+    CALIBRATION_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = RESULT_PATH.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(RESULT_PATH)
+
+
+def _prompt_final_action(has_previous: bool) -> str:
+    while True:
+        if has_previous:
+            prompt = "Update registry, keep previous, or repeat? [u/K/r]: "
+        else:
+            prompt = "Create registry entry or repeat? [u/r]: "
+        value = input(prompt).strip().lower()
+        if value in {"u", "update"}:
+            return "update"
+        if has_previous and value in {"", "k", "keep"}:
+            return "keep"
+        if value in {"r", "repeat"}:
+            return "repeat"
+        print("Enter U to update, K to keep the previous entry, or R to repeat.")
+
+
 def _write_registry(
     scanner: str,
     gz_bias: float,
     fit: Dict[str, float],
+    quality: Dict[str, object],
 ) -> None:
     registry = _load_registry()
     robots = registry["robots"]
@@ -351,6 +471,7 @@ def _write_registry(
         },
         "calibrated_at_utc": _utc_now(),
         "source": str(ACTIVE_CSV_PATH),
+        "quality": quality,
         "production_loader_enabled": False,
     }
 
@@ -362,25 +483,50 @@ def _write_registry(
     temporary.replace(REGISTRY_PATH)
 
 
-def main() -> int:
-    scanner = _scanner_name()
+def _run_session(scanner: str) -> str:
     _archive_active_csv(scanner)
+    registry = _load_registry()
+    previous = _previous_entry(registry, scanner)
 
     print("============================================================")
     print(f"Mobility calibration: {scanner}")
+    if previous is None:
+        print("Previous robot calibration: none")
+    else:
+        old_model = previous.get("distance_model") or {}
+        print(f"Previous GZ_BIAS:          {previous.get('gz_bias')}")
+        if isinstance(old_model, dict):
+            print(
+                "Previous distance cmd_a/b: "
+                f"{old_model.get('cmd_a')}, {old_model.get('cmd_b')}"
+            )
     print("Place the robot at the start mark on a clear straight path.")
     input("Keep it stationary and press Enter to begin: ")
 
-    gz_bias, gz_spread, sample_count = _measure_stationary_gz_bias()
+    stationary_bias, gz_spread, sample_count = _measure_stationary_gz_bias()
+    if previous is None:
+        gz_bias = _first_time_gz_bias(scanner, stationary_bias)
+    else:
+        try:
+            gz_bias = float(previous["gz_bias"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("previous registry GZ_BIAS is invalid") from exc
+        print(f"Using previous GZ_BIAS: {gz_bias:.9f}")
     motion.GZ_BIAS = gz_bias
 
     raw_points: List[Tuple[float, float]] = []
     lateral_points: List[float] = []
-    for raw_distance in RAW_SEQUENCE_M:
+    for index, raw_distance in enumerate(RAW_SEQUENCE_M):
+        next_text = (
+            f"raw motor distance {RAW_SEQUENCE_M[index + 1]:.2f} m"
+            if index + 1 < len(RAW_SEQUENCE_M)
+            else f"candidate calibrated distance {VERIFY_DISTANCE_M:.2f} m"
+        )
         actual_forward, actual_lateral = _collect_raw_point(
-            scanner,
-            raw_distance,
-            gz_bias,
+            scanner=scanner,
+            raw_motor_distance_m=raw_distance,
+            gz_bias=gz_bias,
+            next_experiment=next_text,
         )
         raw_points.append((raw_distance, actual_forward))
         lateral_points.append(actual_lateral)
@@ -397,6 +543,7 @@ def main() -> int:
             desired_distance_m=VERIFY_DISTANCE_M,
             cmd_a=fit["cmd_a"],
             cmd_b=fit["cmd_b"],
+            next_experiment="calibration quality summary",
         )
         if not retry and verification is not None:
             break
@@ -404,7 +551,6 @@ def main() -> int:
 
     verify_forward_m, verify_lateral_m = verification
     verify_error_m = abs(verify_forward_m - VERIFY_DISTANCE_M)
-
     checks = {
         "r_squared": fit["r_squared"] >= MIN_R_SQUARED,
         "fit_rmse": fit["rmse_m"] <= MAX_FIT_RMSE_M,
@@ -412,17 +558,42 @@ def main() -> int:
         "verify_lateral": abs(verify_lateral_m) <= MAX_VERIFY_LATERAL_SHIFT_M,
     }
     passed = all(checks.values())
-
-    if passed:
-        _write_registry(scanner, gz_bias, fit)
+    comparison = _comparison(previous, gz_bias, fit)
+    quality: Dict[str, object] = {
+        "status": "pass" if passed else "review",
+        "checks": checks,
+        "fit_rmse_m": fit["rmse_m"],
+        "r_squared": fit["r_squared"],
+        "verification_distance_error_m": verify_error_m,
+        "verification_lateral_shift_m": verify_lateral_m,
+        "maximum_raw_lateral_shift_m": max(abs(x) for x in lateral_points),
+        "stationary_gz_bias": stationary_bias,
+        "stationary_gz_spread": gz_spread,
+        "stationary_sample_count": sample_count,
+    }
+    result: Dict[str, object] = {
+        "generated_at_utc": _utc_now(),
+        "scanner": scanner,
+        "quality": quality,
+        "candidate": {
+            "gz_bias": gz_bias,
+            "distance_model": {
+                "actual_a": fit["actual_a"],
+                "actual_b": fit["actual_b"],
+                "cmd_a": fit["cmd_a"],
+                "cmd_b": fit["cmd_b"],
+            },
+        },
+        "comparison_with_previous": comparison,
+        "session_csv": str(ACTIVE_CSV_PATH),
+    }
+    _write_result(result)
 
     print("\n============================================================")
-    if passed:
-        print(f"PASS — {scanner} calibration recorded")
-    else:
-        print(f"REVIEW — {scanner} registry was not changed")
+    print(f"QUALITY: {'PASS' if passed else 'REVIEW'}")
     print("============================================================")
     print(f"GZ_BIAS:                 {gz_bias:.9f}")
+    print(f"Stationary gyro estimate:{stationary_bias: .9f}")
     print(f"Gyro sample spread:      {gz_spread:.6f} deg/s ({sample_count} samples)")
     print(f"Distance actual_a/b:     {fit['actual_a']:.12f}, {fit['actual_b']:.12f}")
     print(f"Distance cmd_a/b:        {fit['cmd_a']:.12f}, {fit['cmd_b']:.12f}")
@@ -433,11 +604,40 @@ def main() -> int:
     failed = [name for name, ok in checks.items() if not ok]
     if failed:
         print("Failed checks:            " + ", ".join(failed))
+    if comparison.get("available"):
+        print("Previous comparison:      " + (
+            "MAJOR DIFFERENCE" if comparison.get("major_difference") else "no major difference"
+        ))
+        print(
+            "GZ_BIAS old/new:          "
+            f"{comparison.get('previous_gz_bias')} / {gz_bias:.9f}"
+        )
+        for name in ("actual_a", "actual_b", "cmd_a", "cmd_b"):
+            change = comparison.get(f"{name}_change_percent")
+            if change is not None:
+                print(f"{name} change:             {float(change):+.2f}%")
+    else:
+        print("Previous comparison:      first calibration")
     print(f"Session CSV:              {ACTIVE_CSV_PATH}")
-    if passed:
-        print(f"Candidate registry:       {REGISTRY_PATH}")
+    print(f"Quality report:           {RESULT_PATH}")
+
+    action = _prompt_final_action(previous is not None)
+    if action == "update":
+        _write_registry(scanner, gz_bias, fit, quality)
+        print(f"Registry updated:         {REGISTRY_PATH}")
         print("Production loader:        not enabled in this interface trial")
-    return 0 if passed else 1
+    elif action == "keep":
+        print("Previous registry entry retained.")
+    return action
+
+
+def main() -> int:
+    scanner = _scanner_name()
+    while True:
+        action = _run_session(scanner)
+        if action != "repeat":
+            return 0
+        print("\nRepeating calibration with a fresh active session...")
 
 
 if __name__ == "__main__":
