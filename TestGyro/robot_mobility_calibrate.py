@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """One-command guided mobility calibration for one AutoLab robot.
 
-The operator runs this script once and enters only:
-
-* measured forward distance in centimetres;
-* signed lateral shift in centimetres (right positive);
-* whether the current measurement should be kept or retried.
-
-Accepted results are written to the per-robot production calibration registry.
-The motion layer reads the latest PASS result for its own scanner name.
+The tool first derives the movement-effective GZ_BIAS automatically from seven
+short movements.  It then asks the operator only for measured forward distance
+during distance calibration.  Each stage has its own review/retry checkpoint;
+the production registry is changed only after both stages are accepted and the
+operator approves the overall conclusion.
 """
 
 from __future__ import annotations
@@ -16,6 +13,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 import shutil
 import statistics
 import sys
@@ -33,22 +31,20 @@ if str(ROBOT_ROOT) not in sys.path:
 import robot_mobility_motion as motion
 
 
-# Fixed quick sequence.  Non-monotonic order reduces correlation between test
-# distance and gradual battery/motor heating.
-RAW_SEQUENCE_M = (1.00, 0.00, 2.00, 0.20, 0.50)
+# Fixed sequence. Non-monotonic order reduces correlation between test distance
+# and gradual battery/motor heating. The zero point measures kick-only travel.
+RAW_SEQUENCE_M = (1.00, 0.00, 2.00, 0.20, 1.50, 0.50, 1.80, 0.10, 1.20, 0.30)
 VERIFY_DISTANCE_M = 1.00
-INITIAL_GZ_TEST_DISTANCE_M = 1.50
-INITIAL_GZ_BIAS_OFFSETS = (0.00, -0.10, 0.10)
-
-STATIONARY_SAMPLE_SEC = 5.0
-STATIONARY_DISCARD_SEC = 1.0
-STATIONARY_SAMPLE_DT_SEC = 0.02
-STATIONARY_TRIM_FRACTION = 0.10
+GZ_TEST_DISTANCE_M = 0.50
+GZ_BIAS_SEQUENCE = (0.0, -9.0, 9.0, -6.0, 6.0, -3.0, 3.0)
 
 MIN_R_SQUARED = 0.995
 MAX_FIT_RMSE_M = 0.05
 MAX_VERIFY_DISTANCE_ERROR_M = 0.05
-MAX_VERIFY_LATERAL_SHIFT_M = 0.05
+MIN_GZ_R_SQUARED = 0.90
+MAX_GZ_REGRESSION_RMSE_DEG = 3.0
+PREFERRED_GZ_ZERO_MIN = -3.0
+PREFERRED_GZ_ZERO_MAX = 3.0
 DEFAULT_BUCK_VOLTAGE_V = 8.2
 
 CALIBRATION_DIR = SCRIPT_DIR / "calibration"
@@ -61,12 +57,15 @@ CSV_FIELDS = (
     "recorded_at_utc",
     "scanner",
     "phase",
+    "round",
     "attempt",
     "accepted",
+    "trial_gz_bias",
+    "final_yaw_deg",
+    "max_abs_yaw_deg",
     "raw_motor_distance_m",
     "desired_distance_m",
     "actual_forward_distance_m",
-    "actual_lateral_shift_m",
     "gz_bias",
     "execution_ok",
     "execution_detail",
@@ -141,40 +140,6 @@ def _prompt_retry(next_experiment: str) -> bool:
         print("Enter Y to keep this measurement, or N to discard and retry it.")
 
 
-def _trimmed_mean(values: List[float], fraction: float) -> float:
-    if not values:
-        raise RuntimeError("no gyro samples collected")
-    ordered = sorted(values)
-    trim_count = int(len(ordered) * fraction)
-    if trim_count > 0 and (2 * trim_count) < len(ordered):
-        ordered = ordered[trim_count:-trim_count]
-    return statistics.fmean(ordered)
-
-
-def _measure_stationary_gz_bias() -> Tuple[float, float, int]:
-    ok, imu, detail = motion._imu_begin()
-    if not ok:
-        raise RuntimeError(f"IMU initialization failed: {detail}")
-
-    print(f"Measuring stationary gyro for {STATIONARY_SAMPLE_SEC:.0f} seconds...")
-    samples: List[float] = []
-    start = time.monotonic()
-    while True:
-        elapsed = time.monotonic() - start
-        if elapsed >= STATIONARY_SAMPLE_SEC:
-            break
-        _ax, _ay, _az, _gx, _gy, gz = imu.read_accelerometer_gyro_data()
-        if elapsed >= STATIONARY_DISCARD_SEC and math.isfinite(float(gz)):
-            samples.append(float(gz))
-        time.sleep(STATIONARY_SAMPLE_DT_SEC)
-
-    if len(samples) < 20:
-        raise RuntimeError(f"too few usable gyro samples: {len(samples)}")
-    bias = _trimmed_mean(samples, STATIONARY_TRIM_FRACTION)
-    spread = statistics.pstdev(samples)
-    return bias, spread, len(samples)
-
-
 def _execute_raw(
     raw_motor_distance_m: float,
     gz_bias: float,
@@ -213,7 +178,8 @@ def _measure_one(
     cmd_a: Optional[float] = None,
     cmd_b: Optional[float] = None,
     next_experiment: str = "calibration summary",
-) -> Tuple[bool, Optional[Tuple[float, float]]]:
+    round_number: int = 1,
+) -> Tuple[bool, Optional[float]]:
     if raw_motor_distance_m is not None:
         label = f"raw motor distance {raw_motor_distance_m:.2f} m"
     else:
@@ -239,6 +205,7 @@ def _measure_one(
         "recorded_at_utc": _utc_now(),
         "scanner": scanner,
         "phase": phase,
+        "round": round_number,
         "attempt": attempt,
         "accepted": False,
         "raw_motor_distance_m": "" if raw_motor_distance_m is None else raw_motor_distance_m,
@@ -258,19 +225,15 @@ def _measure_one(
         raise RuntimeError("calibration stopped after failed movement")
 
     actual_forward_m = _prompt_float_cm("Actual forward distance (cm): ")
-    actual_lateral_m = _prompt_float_cm(
-        "Lateral shift (cm, right positive): "
-    )
     retry = _prompt_retry(next_experiment)
 
     row["actual_forward_distance_m"] = actual_forward_m
-    row["actual_lateral_shift_m"] = actual_lateral_m
     row["accepted"] = not retry
     _append_row(row)
 
     if retry:
         return True, None
-    return False, (actual_forward_m, actual_lateral_m)
+    return False, actual_forward_m
 
 
 def _collect_raw_point(
@@ -279,7 +242,8 @@ def _collect_raw_point(
     gz_bias: float,
     next_experiment: str,
     phase: str = "raw_fit",
-) -> Tuple[float, float]:
+    round_number: int = 1,
+) -> float:
     attempt = 1
     while True:
         retry, measurement = _measure_one(
@@ -289,6 +253,7 @@ def _collect_raw_point(
             gz_bias=gz_bias,
             raw_motor_distance_m=raw_motor_distance_m,
             next_experiment=next_experiment,
+            round_number=round_number,
         )
         if not retry and measurement is not None:
             return measurement
@@ -342,35 +307,147 @@ def _previous_entry(registry: Dict[str, object], scanner: str) -> Optional[Dict[
     return entry if isinstance(entry, dict) else None
 
 
-def _first_time_gz_bias(
-    scanner: str,
-    stationary_bias: float,
-) -> float:
-    """Choose the least-drifting of three first-time bias candidates."""
-    candidates: List[Tuple[float, float]] = []
-    biases = [stationary_bias + offset for offset in INITIAL_GZ_BIAS_OFFSETS]
-    for index, bias in enumerate(biases):
-        next_text = (
-            f"GZ_BIAS {biases[index + 1]:.6f}, "
-            f"raw {INITIAL_GZ_TEST_DISTANCE_M:.2f} m"
-            if index + 1 < len(biases)
-            else f"raw motor distance {RAW_SEQUENCE_M[0]:.2f} m"
-        )
-        _forward, lateral = _collect_raw_point(
-            scanner=scanner,
-            raw_motor_distance_m=INITIAL_GZ_TEST_DISTANCE_M,
-            gz_bias=bias,
-            next_experiment=next_text,
-            phase="initial_gz_selection",
-        )
-        candidates.append((bias, lateral))
+_DETAIL_NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 
-    selected_bias, _selected_lateral = min(
-        candidates,
-        key=lambda item: (abs(item[1]), abs(item[0] - stationary_bias)),
-    )
-    print(f"Initial GZ_BIAS selected: {selected_bias:.9f}")
-    return selected_bias
+
+def _detail_number(detail: str, name: str) -> float:
+    match = re.search(rf"(?:^|\s){re.escape(name)}=({_DETAIL_NUMBER})(?:\s|$)", detail)
+    if match is None:
+        raise RuntimeError(f"movement detail is missing {name}")
+    value = float(match.group(1))
+    if not math.isfinite(value):
+        raise RuntimeError(f"movement detail has non-finite {name}")
+    return value
+
+
+def _ordinary_line_fit(points: List[Tuple[float, float]]) -> Dict[str, float]:
+    if len(points) < 2:
+        raise RuntimeError("at least two regression points are required")
+    mean_x = statistics.fmean(x for x, _y in points)
+    mean_y = statistics.fmean(y for _x, y in points)
+    sxx = sum((x - mean_x) ** 2 for x, _y in points)
+    if sxx <= 0.0:
+        raise RuntimeError("regression inputs must not all be identical")
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in points) / sxx
+    intercept = mean_y - slope * mean_x
+    residuals = [y - (intercept + slope * x) for x, y in points]
+    rmse = math.sqrt(statistics.fmean(value * value for value in residuals))
+    syy = sum((y - mean_y) ** 2 for _x, y in points)
+    r_squared = 1.0 - sum(value * value for value in residuals) / syy if syy else 1.0
+    if slope == 0.0:
+        raise RuntimeError("GZ_BIAS regression slope is zero")
+    return {
+        "intercept_deg": intercept,
+        "slope_deg_per_bias": slope,
+        "zero_crossing_gz_bias": -intercept / slope,
+        "rmse_deg": rmse,
+        "r_squared": r_squared,
+    }
+
+
+def _gz_quality(points: List[Tuple[float, float]], fit: Dict[str, float]) -> Dict[str, object]:
+    observed = [yaw for _bias, yaw in points]
+    zero = fit["zero_crossing_gz_bias"]
+    checks = {
+        "negative_slope": fit["slope_deg_per_bias"] < 0.0,
+        "observed_sign_crossing": min(observed) < 0.0 < max(observed),
+        "zero_inside_test_range": min(GZ_BIAS_SEQUENCE) <= zero <= max(GZ_BIAS_SEQUENCE),
+        "r_squared": fit["r_squared"] >= MIN_GZ_R_SQUARED,
+        "regression_rmse": fit["rmse_deg"] <= MAX_GZ_REGRESSION_RMSE_DEG,
+    }
+    return {
+        "status": "pass" if all(checks.values()) else "review",
+        "checks": checks,
+        "preferred_central_region": PREFERRED_GZ_ZERO_MIN <= zero <= PREFERRED_GZ_ZERO_MAX,
+    }
+
+
+def _prompt_accept_stage(stage_name: str) -> bool:
+    while True:
+        answer = input(f"Accept this {stage_name} result or retry this stage? [A/r]: ").strip().lower()
+        if answer in {"", "a", "accept"}:
+            return True
+        if answer in {"r", "retry"}:
+            return False
+        print("Enter A to accept this result or R to repeat this stage.")
+
+
+def _run_gz_bias_stage(scanner: str, previous: Optional[Dict[str, object]]) -> Dict[str, object]:
+    round_number = 1
+    while True:
+        print("\n============================================================")
+        print(f"GZ_BIAS CALIBRATION — ROUND {round_number}")
+        print("============================================================")
+        print("Seven automatic 0.50 m movements will run in this order:")
+        print("GZ_BIAS: " + ", ".join(f"{value:+g}" for value in GZ_BIAS_SEQUENCE))
+        print("Total commanded travel: 3.50 m.")
+        print("No manual distance or lateral-shift measurement is required.")
+        input("Confirm the open movement area is clear, then press Enter: ")
+
+        points: List[Tuple[float, float]] = []
+        measurements: List[Dict[str, object]] = []
+        for index, trial_bias in enumerate(GZ_BIAS_SEQUENCE, start=1):
+            attempt = 1
+            while True:
+                print(f"\nGZ trial {index}/7: bias={trial_bias:+.1f}; starting in 3 seconds...")
+                time.sleep(3.0)
+                ok, detail = motion._run_move(
+                    forward=True,
+                    distance_m=GZ_TEST_DISTANCE_M,
+                    calibration_gz_bias=trial_bias,
+                )
+                row: Dict[str, object] = {
+                    "recorded_at_utc": _utc_now(), "scanner": scanner,
+                    "phase": "gz_bias_regression", "round": round_number,
+                    "attempt": attempt, "accepted": False,
+                    "trial_gz_bias": trial_bias, "desired_distance_m": GZ_TEST_DISTANCE_M,
+                    "gz_bias": trial_bias, "execution_ok": ok,
+                    "execution_detail": detail,
+                }
+                try:
+                    if not ok:
+                        raise RuntimeError(detail)
+                    final_yaw = _detail_number(detail, "final_yaw_deg")
+                    max_abs_yaw = _detail_number(detail, "max_abs_yaw_deg")
+                except Exception as exc:
+                    print(f"GZ trial failed: {exc}")
+                    _append_row(row)
+                    retry = input("Retry this movement? [Y/n]: ").strip().lower()
+                    if retry in {"", "y", "yes"}:
+                        attempt += 1
+                        continue
+                    raise RuntimeError("GZ_BIAS calibration stopped after failed movement") from exc
+                row.update({"accepted": True, "final_yaw_deg": final_yaw,
+                            "max_abs_yaw_deg": max_abs_yaw})
+                _append_row(row)
+                points.append((trial_bias, final_yaw))
+                measurements.append({"trial_gz_bias": trial_bias,
+                                     "final_yaw_deg": final_yaw,
+                                     "max_abs_yaw_deg": max_abs_yaw})
+                print(f"final_yaw_deg={final_yaw:+.3f}; max_abs_yaw_deg={max_abs_yaw:.3f}")
+                break
+
+        fit = _ordinary_line_fit(points)
+        quality = _gz_quality(points, fit)
+        old_bias = previous.get("gz_bias") if isinstance(previous, dict) else None
+        print("\nGZ_BIAS CALIBRATION RESULT")
+        print(f"Regression: final_yaw = {fit['intercept_deg']:+.6f} "
+              f"{fit['slope_deg_per_bias']:+.6f} * GZ_BIAS")
+        print(f"Zero crossing:           {fit['zero_crossing_gz_bias']:+.9f}")
+        print(f"R-squared:              {fit['r_squared']:.6f}")
+        print(f"Regression RMSE:        {fit['rmse_deg']:.3f} deg")
+        print(f"Quality:                {str(quality['status']).upper()}")
+        if old_bias is not None:
+            print(f"Previous GZ_BIAS:       {old_bias}")
+        failed = [name for name, passed in quality["checks"].items() if not passed]
+        if failed:
+            print("Failed checks:           " + ", ".join(failed))
+        if not quality["preferred_central_region"]:
+            print("Notice: zero crossing is outside the preferred [-3,+3] region.")
+        if _prompt_accept_stage("GZ_BIAS calibration"):
+            return {"accepted_round": round_number, "measurements": measurements,
+                    "regression": fit, "quality": quality}
+        round_number += 1
 
 
 def _percent_change(current: float, previous: float) -> Optional[float]:
@@ -494,11 +571,88 @@ def _write_registry(
     temporary.replace(REGISTRY_PATH)
 
 
+def _run_distance_stage(scanner: str, gz_bias: float) -> Dict[str, object]:
+    round_number = 1
+    while True:
+        print("\n============================================================")
+        print(f"DISTANCE CALIBRATION — ROUND {round_number}")
+        print("============================================================")
+        print("Ten raw motor-distance trials will run in this order:")
+        print("  " + " -> ".join(f"{value:.2f} m" for value in RAW_SEQUENCE_M))
+        print(f"A calibrated {VERIFY_DISTANCE_M:.2f} m verification follows the fit.")
+        print("For each trial, enter only the measured forward distance.")
+        print("The tool will show the next trial before you keep the current measurement.")
+        input("Place the robot for the first distance trial, then press Enter: ")
+
+        raw_points: List[Tuple[float, float]] = []
+        kick_distance_m: Optional[float] = None
+        for index, raw_distance in enumerate(RAW_SEQUENCE_M):
+            next_text = (
+                f"raw motor distance {RAW_SEQUENCE_M[index + 1]:.2f} m"
+                if index + 1 < len(RAW_SEQUENCE_M)
+                else f"candidate calibrated distance {VERIFY_DISTANCE_M:.2f} m"
+            )
+            actual_forward = _collect_raw_point(
+                scanner=scanner, raw_motor_distance_m=raw_distance,
+                gz_bias=gz_bias, next_experiment=next_text,
+                round_number=round_number,
+            )
+            raw_points.append((raw_distance, actual_forward))
+            if raw_distance == 0.0:
+                kick_distance_m = actual_forward
+        if kick_distance_m is None:
+            raise RuntimeError("accepted kick-only measurement is missing")
+
+        fit = _linear_fit(raw_points)
+        verification_attempt = 1
+        while True:
+            retry, verification = _measure_one(
+                scanner=scanner, phase="candidate_verification",
+                attempt=verification_attempt, gz_bias=gz_bias,
+                desired_distance_m=VERIFY_DISTANCE_M,
+                cmd_a=fit["cmd_a"], cmd_b=fit["cmd_b"],
+                next_experiment="distance calibration result",
+                round_number=round_number,
+            )
+            if not retry and verification is not None:
+                break
+            verification_attempt += 1
+
+        verify_error_m = abs(verification - VERIFY_DISTANCE_M)
+        checks = {
+            "r_squared": fit["r_squared"] >= MIN_R_SQUARED,
+            "fit_rmse": fit["rmse_m"] <= MAX_FIT_RMSE_M,
+            "verify_distance": verify_error_m <= MAX_VERIFY_DISTANCE_ERROR_M,
+        }
+        quality: Dict[str, object] = {
+            "status": "pass" if all(checks.values()) else "review",
+            "checks": checks, "fit_rmse_m": fit["rmse_m"],
+            "r_squared": fit["r_squared"],
+            "verification_distance_error_m": verify_error_m,
+        }
+        print("\nDISTANCE CALIBRATION RESULT")
+        print(f"Distance actual_a/b:    {fit['actual_a']:.12f}, {fit['actual_b']:.12f}")
+        print(f"Distance cmd_a/b:       {fit['cmd_a']:.12f}, {fit['cmd_b']:.12f}")
+        print(f"Fit RMSE:              {fit['rmse_m'] * 100:.2f} cm")
+        print(f"Fit R-squared:         {fit['r_squared']:.6f}")
+        print(f"1 m verification error:{verify_error_m * 100: .2f} cm")
+        print(f"Kick-only distance:    {kick_distance_m * 100:.2f} cm")
+        print(f"Short-move skip below: {kick_distance_m * 50:.2f} cm")
+        print(f"Quality:               {str(quality['status']).upper()}")
+        failed = [name for name, passed in checks.items() if not passed]
+        if failed:
+            print("Failed checks:          " + ", ".join(failed))
+        if _prompt_accept_stage("distance calibration"):
+            return {"accepted_round": round_number, "raw_points": raw_points,
+                    "regression": fit, "verification_distance_m": verification,
+                    "kick_distance_m": kick_distance_m, "quality": quality}
+        round_number += 1
+
+
 def _run_session(scanner: str) -> str:
     _archive_active_csv(scanner)
     registry = _load_registry()
     previous = _previous_entry(registry, scanner)
-
     print("============================================================")
     print(f"Mobility calibration: {scanner}")
     if previous is None:
@@ -507,101 +661,35 @@ def _run_session(scanner: str) -> str:
         old_model = previous.get("distance_model") or {}
         print(f"Previous GZ_BIAS:          {previous.get('gz_bias')}")
         if isinstance(old_model, dict):
-            print(
-                "Previous distance cmd_a/b: "
-                f"{old_model.get('cmd_a')}, {old_model.get('cmd_b')}"
-            )
-    print("Place the robot at the start mark on a clear straight path.")
-    input("Keep it stationary and press Enter to begin: ")
+            print("Previous distance cmd_a/b: "
+                  f"{old_model.get('cmd_a')}, {old_model.get('cmd_b')}")
 
-    stationary_bias, gz_spread, sample_count = _measure_stationary_gz_bias()
-    if previous is None:
-        gz_bias = _first_time_gz_bias(scanner, stationary_bias)
-    else:
-        try:
-            gz_bias = float(previous["gz_bias"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise RuntimeError("previous registry GZ_BIAS is invalid") from exc
-        print(f"Using previous GZ_BIAS: {gz_bias:.9f}")
-    raw_points: List[Tuple[float, float]] = []
-    lateral_points: List[float] = []
-    kick_distance_m: Optional[float] = None
-    for index, raw_distance in enumerate(RAW_SEQUENCE_M):
-        next_text = (
-            f"raw motor distance {RAW_SEQUENCE_M[index + 1]:.2f} m"
-            if index + 1 < len(RAW_SEQUENCE_M)
-            else f"candidate calibrated distance {VERIFY_DISTANCE_M:.2f} m"
-        )
-        actual_forward, actual_lateral = _collect_raw_point(
-            scanner=scanner,
-            raw_motor_distance_m=raw_distance,
-            gz_bias=gz_bias,
-            next_experiment=next_text,
-        )
-        raw_points.append((raw_distance, actual_forward))
-        lateral_points.append(actual_lateral)
-        if raw_distance == 0.0:
-            kick_distance_m = actual_forward
-
-    if kick_distance_m is None:
-        raise RuntimeError("accepted kick-only measurement is missing")
-
-    fit = _linear_fit(raw_points)
-
-    verification_attempt = 1
-    while True:
-        retry, verification = _measure_one(
-            scanner=scanner,
-            phase="candidate_verification",
-            attempt=verification_attempt,
-            gz_bias=gz_bias,
-            desired_distance_m=VERIFY_DISTANCE_M,
-            cmd_a=fit["cmd_a"],
-            cmd_b=fit["cmd_b"],
-            next_experiment="calibration quality summary",
-        )
-        if not retry and verification is not None:
-            break
-        verification_attempt += 1
-
-    verify_forward_m, verify_lateral_m = verification
-    verify_error_m = abs(verify_forward_m - VERIFY_DISTANCE_M)
-    checks = {
-        "r_squared": fit["r_squared"] >= MIN_R_SQUARED,
-        "fit_rmse": fit["rmse_m"] <= MAX_FIT_RMSE_M,
-        "verify_distance": verify_error_m <= MAX_VERIFY_DISTANCE_ERROR_M,
-        "verify_lateral": abs(verify_lateral_m) <= MAX_VERIFY_LATERAL_SHIFT_M,
-    }
-    passed = all(checks.values())
+    gz_stage = _run_gz_bias_stage(scanner, previous)
+    gz_bias = float(gz_stage["regression"]["zero_crossing_gz_bias"])
+    print("\nNext stage overview:")
+    print("Distance trial order: " + " -> ".join(f"{value:.2f} m" for value in RAW_SEQUENCE_M))
+    print(f"Then one {VERIFY_DISTANCE_M:.2f} m verification movement.")
+    distance_stage = _run_distance_stage(scanner, gz_bias)
+    fit = distance_stage["regression"]
+    kick_distance_m = float(distance_stage["kick_distance_m"])
     comparison = _comparison(previous, gz_bias, fit)
-    quality: Dict[str, object] = {
-        "status": "pass" if passed else "review",
-        "checks": checks,
-        "fit_rmse_m": fit["rmse_m"],
-        "r_squared": fit["r_squared"],
-        "verification_distance_error_m": verify_error_m,
-        "verification_lateral_shift_m": verify_lateral_m,
-        "maximum_raw_lateral_shift_m": max(abs(x) for x in lateral_points),
-        "stationary_gz_bias": stationary_bias,
-        "stationary_gz_spread": gz_spread,
-        "stationary_sample_count": sample_count,
+    combined_quality = {
+        "status": "pass" if (
+            gz_stage["quality"]["status"] == "pass"
+            and distance_stage["quality"]["status"] == "pass"
+        ) else "review",
+        "gz_bias": gz_stage["quality"],
+        "distance": distance_stage["quality"],
     }
     result: Dict[str, object] = {
-        "generated_at_utc": _utc_now(),
-        "scanner": scanner,
-        "quality": quality,
+        "generated_at_utc": _utc_now(), "scanner": scanner,
+        "gz_bias_calibration": gz_stage,
+        "distance_calibration": distance_stage,
+        "combined_quality": combined_quality,
         "candidate": {
-            "gz_bias": gz_bias,
-            "distance_model": {
-                "actual_a": fit["actual_a"],
-                "actual_b": fit["actual_b"],
-                "cmd_a": fit["cmd_a"],
-                "cmd_b": fit["cmd_b"],
-            },
-            "short_move": {
-                "kick_distance_m": kick_distance_m,
-                "skip_threshold_m": kick_distance_m / 2.0,
-            },
+            "gz_bias": gz_bias, "distance_model": fit,
+            "short_move": {"kick_distance_m": kick_distance_m,
+                           "skip_threshold_m": kick_distance_m / 2.0},
         },
         "comparison_with_previous": comparison,
         "session_csv": str(ACTIVE_CSV_PATH),
@@ -609,44 +697,30 @@ def _run_session(scanner: str) -> str:
     _write_result(result)
 
     print("\n============================================================")
-    print(f"QUALITY: {'PASS' if passed else 'REVIEW'}")
+    print("OVERALL CALIBRATION CONCLUSION")
     print("============================================================")
-    print(f"GZ_BIAS:                 {gz_bias:.9f}")
-    print(f"Stationary gyro estimate:{stationary_bias: .9f}")
-    print(f"Gyro sample spread:      {gz_spread:.6f} deg/s ({sample_count} samples)")
-    print(f"Distance actual_a/b:     {fit['actual_a']:.12f}, {fit['actual_b']:.12f}")
-    print(f"Distance cmd_a/b:        {fit['cmd_a']:.12f}, {fit['cmd_b']:.12f}")
-    print(f"Fit RMSE:                {fit['rmse_m'] * 100:.2f} cm")
-    print(f"Fit R-squared:           {fit['r_squared']:.6f}")
-    print(f"1 m verification error:  {verify_error_m * 100:.2f} cm")
-    print(f"1 m lateral shift:       {verify_lateral_m * 100:+.2f} cm")
-    print(f"Kick-only distance:      {kick_distance_m * 100:.2f} cm")
-    print(f"Short-move skip below:   {kick_distance_m * 50:.2f} cm")
-    failed = [name for name, ok in checks.items() if not ok]
-    if failed:
-        print("Failed checks:            " + ", ".join(failed))
+    print(f"Combined quality:          {str(combined_quality['status']).upper()}")
+    print(f"Accepted GZ_BIAS:          {gz_bias:+.9f}")
+    print(f"GZ regression R-squared:   {gz_stage['regression']['r_squared']:.6f}")
+    print(f"Distance cmd_a/b:          {fit['cmd_a']:.12f}, {fit['cmd_b']:.12f}")
+    print(f"Distance fit RMSE:         {fit['rmse_m'] * 100:.2f} cm")
+    print(f"Distance fit R-squared:    {fit['r_squared']:.6f}")
+    print(f"Kick-only distance:        {kick_distance_m * 100:.2f} cm")
+    print(f"Short-move skip below:     {kick_distance_m * 50:.2f} cm")
     if comparison.get("available"):
-        print("Previous comparison:      " + (
-            "MAJOR DIFFERENCE" if comparison.get("major_difference") else "no major difference"
-        ))
-        print(
-            "GZ_BIAS old/new:          "
-            f"{comparison.get('previous_gz_bias')} / {gz_bias:.9f}"
-        )
-        for name in ("actual_a", "actual_b", "cmd_a", "cmd_b"):
-            change = comparison.get(f"{name}_change_percent")
-            if change is not None:
-                print(f"{name} change:             {float(change):+.2f}%")
+        print("Previous comparison:       " + (
+            "MAJOR DIFFERENCE" if comparison.get("major_difference") else "no major difference"))
+        print(f"GZ_BIAS old/new:           {comparison.get('previous_gz_bias')} / {gz_bias:+.9f}")
     else:
-        print("Previous comparison:      first calibration")
-    print(f"Session CSV:              {ACTIVE_CSV_PATH}")
-    print(f"Quality report:           {RESULT_PATH}")
+        print("Previous comparison:       first calibration")
+    print(f"Session CSV:               {ACTIVE_CSV_PATH}")
+    print(f"Quality report:            {RESULT_PATH}")
 
     action = _prompt_final_action(previous is not None)
     if action == "update":
-        _write_registry(scanner, gz_bias, fit, quality, kick_distance_m)
-        print(f"Registry updated:         {REGISTRY_PATH}")
-        print("Production loader:        enabled for the next motion primitive")
+        _write_registry(scanner, gz_bias, fit, combined_quality, kick_distance_m)
+        print(f"Registry updated:          {REGISTRY_PATH}")
+        print("Production loader:         enabled for the next motion primitive")
     elif action == "keep":
         print("Previous registry entry retained.")
     return action
