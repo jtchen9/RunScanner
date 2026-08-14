@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """One-command guided mobility calibration for one AutoLab robot.
 
-The tool first measures stationary GZ_BIAS for five seconds.  It then asks the
-operator only for measured forward distance during distance calibration.  Each
-stage has its own review/retry checkpoint; the production registry is changed
-only after both stages are accepted and the operator approves the conclusion.
+The tool first measures stationary GZ_BIAS for five seconds and uses that
+measurement only as the initial candidate for repeated 3 m straight-walking
+trials.  The operator accepts the GZ_BIAS that produces a satisfactory physical
+path.  It then asks only for measured forward distance during distance
+calibration.  The production registry is changed only after both stages are
+accepted and the operator approves the conclusion.
 
 The former seven-movement zero-crossing experiment remains below as a disabled
 diagnostic function so it can be tested again without reconstructing it.
@@ -43,6 +45,8 @@ STATIONARY_SAMPLE_SEC = 5.0
 STATIONARY_DISCARD_SEC = 1.0
 STATIONARY_SAMPLE_DT_SEC = 0.02
 STATIONARY_TRIM_FRACTION = 0.10
+GZ_TUNING_DISTANCE_M = 3.00
+GZ_TUNING_CLEARANCE_M = 3.50
 
 MIN_R_SQUARED = 0.995
 MAX_FIT_RMSE_M = 0.05
@@ -378,6 +382,39 @@ def _prompt_accept_stage(stage_name: str) -> bool:
         print("Enter A to accept this result or R to repeat this stage.")
 
 
+def _prompt_gz_candidate(static_gz_bias: float) -> float:
+    """Ask for the next physical-walk candidate; Enter selects the static seed."""
+    while True:
+        answer = input(
+            f"GZ_BIAS for next 3 m trial [{static_gz_bias:+.9f}], or Q to cancel: "
+        ).strip()
+        if not answer:
+            return static_gz_bias
+        if answer.lower() in {"q", "quit", "cancel"}:
+            raise RuntimeError("GZ_BIAS calibration cancelled before acceptance")
+        try:
+            value = float(answer)
+        except ValueError:
+            print("Enter a finite GZ_BIAS number, press Enter for the static value, or Q.")
+            continue
+        if not math.isfinite(value):
+            print("Enter a finite GZ_BIAS number.")
+            continue
+        return value
+
+
+def _prompt_gz_trial_decision() -> str:
+    while True:
+        answer = input("Is this 3 m path satisfactory? [Y/n/q]: ").strip().lower()
+        if answer in {"", "y", "yes", "accept"}:
+            return "accept"
+        if answer in {"n", "no", "retry"}:
+            return "retry"
+        if answer in {"q", "quit", "cancel"}:
+            return "cancel"
+        print("Enter Y to accept, N to test another GZ_BIAS, or Q to cancel.")
+
+
 def _trimmed_mean(values: List[float], fraction: float) -> float:
     if not values:
         raise RuntimeError("no gyro samples collected")
@@ -418,72 +455,123 @@ def _run_gz_bias_stage(
     scanner: str,
     previous: Optional[Dict[str, object]],
 ) -> Dict[str, object]:
-    round_number = 1
-    while True:
-        print("\n============================================================")
-        print(f"STATIONARY GZ_BIAS CALIBRATION — ROUND {round_number}")
-        print("============================================================")
-        print("The robot must remain completely stationary for five seconds.")
-        print("The first second is discarded; the highest and lowest 10%")
-        print("of the remaining samples are removed before averaging.")
-        input("Keep the robot stationary and press Enter to begin: ")
+    print("\n============================================================")
+    print("GZ_BIAS CALIBRATION — STATIC SEED AND 3 m WALKING TRIALS")
+    print("============================================================")
+    print("First, the robot must remain completely stationary for five seconds.")
+    print("The first second is discarded; the highest and lowest 10%")
+    print("of the remaining samples are removed before averaging.")
+    input("Keep the robot stationary and press Enter to begin: ")
 
-        gz_bias, spread, sample_count = _measure_stationary_gz_bias()
-        previous_bias = previous.get("gz_bias") if isinstance(previous, dict) else None
-        quality: Dict[str, object] = {
-            "status": "pass",
-            "checks": {
-                "finite_gz_bias": math.isfinite(gz_bias),
-                "minimum_sample_count": sample_count >= 20,
-            },
+    static_gz_bias, spread, sample_count = _measure_stationary_gz_bias()
+    previous_bias = previous.get("gz_bias") if isinstance(previous, dict) else None
+    _append_row({
+        "recorded_at_utc": _utc_now(), "scanner": scanner,
+        "phase": "gz_bias_stationary_seed", "round": 1, "attempt": 1,
+        "accepted": True, "gz_bias": static_gz_bias, "execution_ok": True,
+        "execution_detail": (
+            f"stationary_seed_gz_bias={static_gz_bias:+.9f} "
+            f"raw_spread={spread:.9f}_deg/s sample_count={sample_count} "
+            f"discard_sec={STATIONARY_DISCARD_SEC:.1f} "
+            f"trim_fraction={STATIONARY_TRIM_FRACTION:.2f}"
+        ),
+    })
+
+    print("\nSTATIC GZ_BIAS MEASUREMENT")
+    print(f"Previous GZ_BIAS:       {previous_bias if previous_bias is not None else 'none'}")
+    print(f"Static GZ_BIAS:         {static_gz_bias:+.9f}")
+    print(f"Raw sample spread:      {spread:.9f} deg/s")
+    print(f"Usable sample count:    {sample_count}")
+    print("The static value is only the initial candidate, not the final result.")
+    print("Judge each candidate from the complete physical path of a 3 m walk.")
+
+    trials: List[Dict[str, object]] = []
+    candidate = _prompt_gz_candidate(static_gz_bias)
+    attempt = 1
+    while True:
+        print("\n------------------------------------------------------------")
+        print(f"GZ_BIAS WALKING TRIAL {attempt}")
+        print(f"Candidate GZ_BIAS:      {candidate:+.9f}")
+        print(f"Next test:              move forward {GZ_TUNING_DISTANCE_M:.2f} m")
+        print(
+            f"Reposition the robot and ensure at least {GZ_TUNING_CLEARANCE_M:.2f} m "
+            "ahead is clear."
+        )
+        ready = input("Press Enter to start, or Q to cancel: ").strip().lower()
+        if ready in {"q", "quit", "cancel"}:
+            raise RuntimeError("GZ_BIAS calibration cancelled before acceptance")
+
+        print("Starting in 3 seconds...")
+        time.sleep(3.0)
+        ok, detail = motion._run_move(
+            forward=True,
+            distance_m=GZ_TUNING_DISTANCE_M,
+            calibration_gz_bias=candidate,
+        )
+        trial: Dict[str, object] = {
+            "trial": attempt, "gz_bias": candidate,
+            "distance_m": GZ_TUNING_DISTANCE_M,
+            "execution_ok": ok, "execution_detail": detail,
         }
         row: Dict[str, object] = {
-            "recorded_at_utc": _utc_now(),
-            "scanner": scanner,
-            "phase": "gz_bias_stationary",
-            "round": round_number,
-            "attempt": 1,
-            "accepted": False,
-            "gz_bias": gz_bias,
-            "execution_ok": True,
-            "execution_detail": (
-                f"stationary_gz_bias={gz_bias:+.9f} "
-                f"raw_spread={spread:.9f}_deg/s "
-                f"sample_count={sample_count} "
-                f"discard_sec={STATIONARY_DISCARD_SEC:.1f} "
-                f"trim_fraction={STATIONARY_TRIM_FRACTION:.2f}"
-            ),
+            "recorded_at_utc": _utc_now(), "scanner": scanner,
+            "phase": "gz_bias_physical_walk", "round": 1,
+            "attempt": attempt, "accepted": False,
+            "trial_gz_bias": candidate,
+            "desired_distance_m": GZ_TUNING_DISTANCE_M,
+            "gz_bias": candidate, "execution_ok": ok,
+            "execution_detail": detail,
         }
+        if not ok:
+            print(f"Movement failed: {detail}")
+            _append_row(row)
+            trials.append(trial)
+            decision = input("Retry the same GZ_BIAS trial? [Y/n/q]: ").strip().lower()
+            if decision in {"q", "quit", "cancel"}:
+                raise RuntimeError("GZ_BIAS calibration cancelled after failed movement")
+            if decision in {"n", "no"}:
+                candidate = _prompt_gz_candidate(static_gz_bias)
+            attempt += 1
+            continue
 
-        print("\nSTATIONARY GZ_BIAS CALIBRATION RESULT")
-        print(f"GZ_BIAS:              {gz_bias:+.9f}")
-        print(f"Raw sample spread:     {spread:.9f} deg/s")
-        print(f"Usable sample count:   {sample_count}")
-        if previous_bias is not None:
-            print(f"Previous GZ_BIAS:      {previous_bias}")
-            try:
-                print(f"Change from previous:  {gz_bias - float(previous_bias):+.9f}")
-            except (TypeError, ValueError):
-                print("Change from previous:  unavailable")
-
-        accepted = _prompt_accept_stage("stationary GZ_BIAS calibration")
+        print(f"Movement completed: {detail}")
+        decision = _prompt_gz_trial_decision()
+        accepted = decision == "accept"
         row["accepted"] = accepted
+        trial["accepted"] = accepted
         _append_row(row)
+        trials.append(trial)
+        if decision == "cancel":
+            raise RuntimeError("GZ_BIAS calibration cancelled before acceptance")
         if accepted:
+            quality: Dict[str, object] = {
+                "status": "pass",
+                "checks": {
+                    "finite_gz_bias": math.isfinite(candidate),
+                    "minimum_stationary_sample_count": sample_count >= 20,
+                    "physical_3m_walk_accepted": True,
+                },
+            }
+            print("\nGZ_BIAS CALIBRATION RESULT")
+            print(f"Accepted GZ_BIAS:       {candidate:+.9f}")
+            print(f"Accepted walking trial: {attempt}")
+            print("This accepted result will be used during distance calibration.")
             return {
-                "method": "stationary_trimmed_mean",
-                "accepted_round": round_number,
-                "gz_bias": gz_bias,
-                "measurement": {
+                "method": "stationary_seed_manual_3m_walk",
+                "accepted_round": 1, "accepted_trial": attempt,
+                "gz_bias": candidate,
+                "static_measurement": {
+                    "gz_bias": static_gz_bias,
                     "sample_duration_sec": STATIONARY_SAMPLE_SEC,
                     "discard_sec": STATIONARY_DISCARD_SEC,
                     "trim_fraction": STATIONARY_TRIM_FRACTION,
                     "raw_sample_spread_deg_per_sec": spread,
                     "usable_sample_count": sample_count,
                 },
-                "quality": quality,
+                "trials": trials, "quality": quality,
             }
-        round_number += 1
+        candidate = _prompt_gz_candidate(static_gz_bias)
+        attempt += 1
 
 
 def _run_gz_bias_stage_seven_movement_disabled(
@@ -823,11 +911,12 @@ def _run_session(scanner: str) -> str:
     print("============================================================")
     print(f"Combined quality:          {str(combined_quality['status']).upper()}")
     print(f"Accepted GZ_BIAS:          {gz_bias:+.9f}")
-    print("GZ calibration method:     stationary 5-second trimmed mean")
+    print("GZ calibration method:     static seed + accepted 3 m physical walk")
     print(
         "GZ raw sample spread:      "
-        f"{gz_stage['measurement']['raw_sample_spread_deg_per_sec']:.9f} deg/s"
+        f"{gz_stage['static_measurement']['raw_sample_spread_deg_per_sec']:.9f} deg/s"
     )
+    print(f"Accepted GZ walking trial: {gz_stage['accepted_trial']}")
     print(f"Distance cmd_a/b:          {fit['cmd_a']:.12f}, {fit['cmd_b']:.12f}")
     print(f"Distance fit RMSE:         {fit['rmse_m'] * 100:.2f} cm")
     print(f"Distance fit R-squared:    {fit['r_squared']:.6f}")
