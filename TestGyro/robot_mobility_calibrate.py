@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """One-command guided mobility calibration for one AutoLab robot.
 
-The tool first derives the movement-effective GZ_BIAS automatically from seven
-short movements.  It then asks the operator only for measured forward distance
-during distance calibration.  Each stage has its own review/retry checkpoint;
-the production registry is changed only after both stages are accepted and the
-operator approves the overall conclusion.
+The tool first measures stationary GZ_BIAS for five seconds.  It then asks the
+operator only for measured forward distance during distance calibration.  Each
+stage has its own review/retry checkpoint; the production registry is changed
+only after both stages are accepted and the operator approves the conclusion.
+
+The former seven-movement zero-crossing experiment remains below as a disabled
+diagnostic function so it can be tested again without reconstructing it.
 """
 
 from __future__ import annotations
@@ -37,6 +39,10 @@ RAW_SEQUENCE_M = (1.00, 0.00, 2.00, 0.20, 1.50, 0.50, 1.80, 0.10, 1.20, 0.30)
 VERIFY_DISTANCE_M = 1.00
 GZ_TEST_DISTANCE_M = 0.50
 GZ_BIAS_SEQUENCE = (0.0, -9.0, 9.0, -6.0, 6.0, -3.0, 3.0)
+STATIONARY_SAMPLE_SEC = 5.0
+STATIONARY_DISCARD_SEC = 1.0
+STATIONARY_SAMPLE_DT_SEC = 0.02
+STATIONARY_TRIM_FRACTION = 0.10
 
 MIN_R_SQUARED = 0.995
 MAX_FIT_RMSE_M = 0.05
@@ -372,7 +378,123 @@ def _prompt_accept_stage(stage_name: str) -> bool:
         print("Enter A to accept this result or R to repeat this stage.")
 
 
-def _run_gz_bias_stage(scanner: str, previous: Optional[Dict[str, object]]) -> Dict[str, object]:
+def _trimmed_mean(values: List[float], fraction: float) -> float:
+    if not values:
+        raise RuntimeError("no gyro samples collected")
+    ordered = sorted(float(value) for value in values)
+    trim_count = int(len(ordered) * fraction)
+    if trim_count > 0 and 2 * trim_count < len(ordered):
+        ordered = ordered[trim_count:-trim_count]
+    return statistics.fmean(ordered)
+
+
+def _measure_stationary_gz_bias() -> Tuple[float, float, int]:
+    ok, imu, detail = motion._imu_begin()
+    if not ok:
+        raise RuntimeError(f"IMU initialization failed: {detail}")
+
+    samples: List[float] = []
+    start = time.monotonic()
+    while True:
+        elapsed = time.monotonic() - start
+        if elapsed >= STATIONARY_SAMPLE_SEC:
+            break
+        _ax, _ay, _az, _gx, _gy, gz = imu.read_accelerometer_gyro_data()
+        value = float(gz)
+        if elapsed >= STATIONARY_DISCARD_SEC and math.isfinite(value):
+            samples.append(value)
+        time.sleep(STATIONARY_SAMPLE_DT_SEC)
+
+    if len(samples) < 20:
+        raise RuntimeError(f"too few usable gyro samples: {len(samples)}")
+    return (
+        _trimmed_mean(samples, STATIONARY_TRIM_FRACTION),
+        statistics.pstdev(samples),
+        len(samples),
+    )
+
+
+def _run_gz_bias_stage(
+    scanner: str,
+    previous: Optional[Dict[str, object]],
+) -> Dict[str, object]:
+    round_number = 1
+    while True:
+        print("\n============================================================")
+        print(f"STATIONARY GZ_BIAS CALIBRATION — ROUND {round_number}")
+        print("============================================================")
+        print("The robot must remain completely stationary for five seconds.")
+        print("The first second is discarded; the highest and lowest 10%")
+        print("of the remaining samples are removed before averaging.")
+        input("Keep the robot stationary and press Enter to begin: ")
+
+        gz_bias, spread, sample_count = _measure_stationary_gz_bias()
+        previous_bias = previous.get("gz_bias") if isinstance(previous, dict) else None
+        quality: Dict[str, object] = {
+            "status": "pass",
+            "checks": {
+                "finite_gz_bias": math.isfinite(gz_bias),
+                "minimum_sample_count": sample_count >= 20,
+            },
+        }
+        row: Dict[str, object] = {
+            "recorded_at_utc": _utc_now(),
+            "scanner": scanner,
+            "phase": "gz_bias_stationary",
+            "round": round_number,
+            "attempt": 1,
+            "accepted": False,
+            "gz_bias": gz_bias,
+            "execution_ok": True,
+            "execution_detail": (
+                f"stationary_gz_bias={gz_bias:+.9f} "
+                f"raw_spread={spread:.9f}_deg/s "
+                f"sample_count={sample_count} "
+                f"discard_sec={STATIONARY_DISCARD_SEC:.1f} "
+                f"trim_fraction={STATIONARY_TRIM_FRACTION:.2f}"
+            ),
+        }
+
+        print("\nSTATIONARY GZ_BIAS CALIBRATION RESULT")
+        print(f"GZ_BIAS:              {gz_bias:+.9f}")
+        print(f"Raw sample spread:     {spread:.9f} deg/s")
+        print(f"Usable sample count:   {sample_count}")
+        if previous_bias is not None:
+            print(f"Previous GZ_BIAS:      {previous_bias}")
+            try:
+                print(f"Change from previous:  {gz_bias - float(previous_bias):+.9f}")
+            except (TypeError, ValueError):
+                print("Change from previous:  unavailable")
+
+        accepted = _prompt_accept_stage("stationary GZ_BIAS calibration")
+        row["accepted"] = accepted
+        _append_row(row)
+        if accepted:
+            return {
+                "method": "stationary_trimmed_mean",
+                "accepted_round": round_number,
+                "gz_bias": gz_bias,
+                "measurement": {
+                    "sample_duration_sec": STATIONARY_SAMPLE_SEC,
+                    "discard_sec": STATIONARY_DISCARD_SEC,
+                    "trim_fraction": STATIONARY_TRIM_FRACTION,
+                    "raw_sample_spread_deg_per_sec": spread,
+                    "usable_sample_count": sample_count,
+                },
+                "quality": quality,
+            }
+        round_number += 1
+
+
+def _run_gz_bias_stage_seven_movement_disabled(
+    scanner: str,
+    previous: Optional[Dict[str, object]],
+) -> Dict[str, object]:
+    """Disabled diagnostic retained for possible future comparison.
+
+    This function is intentionally not called by the production calibration
+    workflow.  It contains the former seven self-walking zero-crossing method.
+    """
     round_number = 1
     while True:
         print("\n============================================================")
@@ -665,7 +787,7 @@ def _run_session(scanner: str) -> str:
                   f"{old_model.get('cmd_a')}, {old_model.get('cmd_b')}")
 
     gz_stage = _run_gz_bias_stage(scanner, previous)
-    gz_bias = float(gz_stage["regression"]["zero_crossing_gz_bias"])
+    gz_bias = float(gz_stage["gz_bias"])
     print("\nNext stage overview:")
     print("Distance trial order: " + " -> ".join(f"{value:.2f} m" for value in RAW_SEQUENCE_M))
     print(f"Then one {VERIFY_DISTANCE_M:.2f} m verification movement.")
@@ -701,7 +823,11 @@ def _run_session(scanner: str) -> str:
     print("============================================================")
     print(f"Combined quality:          {str(combined_quality['status']).upper()}")
     print(f"Accepted GZ_BIAS:          {gz_bias:+.9f}")
-    print(f"GZ regression R-squared:   {gz_stage['regression']['r_squared']:.6f}")
+    print("GZ calibration method:     stationary 5-second trimmed mean")
+    print(
+        "GZ raw sample spread:      "
+        f"{gz_stage['measurement']['raw_sample_spread_deg_per_sec']:.9f} deg/s"
+    )
     print(f"Distance cmd_a/b:          {fit['cmd_a']:.12f}, {fit['cmd_b']:.12f}")
     print(f"Distance fit RMSE:         {fit['rmse_m'] * 100:.2f} cm")
     print(f"Distance fit R-squared:    {fit['r_squared']:.6f}")
