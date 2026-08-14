@@ -11,9 +11,6 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
-
-
 ROBOT_ROOT = Path(__file__).resolve().parent
 SCANNER_NAME_PATH = ROBOT_ROOT / "scanner_name.txt"
 REGISTRY_PATH = ROBOT_ROOT / "robot_mobility_calibration.json"
@@ -51,6 +48,10 @@ class MobilityCalibrationSnapshot:
         return detail
 
 
+class MobilityCalibrationError(RuntimeError):
+    """Production movement cannot start without valid robot calibration."""
+
+
 def _finite_number(value: object, name: str) -> float:
     try:
         result = float(value)
@@ -61,37 +62,12 @@ def _finite_number(value: object, name: str) -> float:
     return result
 
 
-def fallback_snapshot(
-    *,
-    gz_bias: float,
-    cmd_a: float,
-    cmd_b: float,
-    warning: str = "",
-    scanner: str = "",
-) -> MobilityCalibrationSnapshot:
-    return MobilityCalibrationSnapshot(
-        scanner=scanner,
-        gz_bias=float(gz_bias),
-        cmd_a=float(cmd_a),
-        cmd_b=float(cmd_b),
-        source="fallback",
-        kick_distance_m=0.0,
-        skip_threshold_m=0.0,
-        warning=warning,
-    )
-
-
 def load_mobility_calibration(
     *,
-    fallback_gz_bias: float,
-    fallback_distance_model: Mapping[str, object],
     scanner_name_path: Path = SCANNER_NAME_PATH,
     registry_path: Path = REGISTRY_PATH,
 ) -> MobilityCalibrationSnapshot:
-    """Return the named robot's registry entry or a complete safe fallback."""
-    fallback_cmd_a = _finite_number(fallback_distance_model.get("cmd_a"), "fallback cmd_a")
-    fallback_cmd_b = _finite_number(fallback_distance_model.get("cmd_b"), "fallback cmd_b")
-
+    """Return the named robot's valid entry or fail closed before movement."""
     try:
         scanner = scanner_name_path.read_text(encoding="utf-8").strip()
         if not scanner:
@@ -150,12 +126,7 @@ def load_mobility_calibration(
             skip_threshold_m=skip_threshold_m,
             calibrated_at_utc=str(entry.get("calibrated_at_utc") or ""),
         )
+    except MobilityCalibrationError:
+        raise
     except Exception as exc:
-        scanner_value = locals().get("scanner", "")
-        return fallback_snapshot(
-            gz_bias=fallback_gz_bias,
-            cmd_a=fallback_cmd_a,
-            cmd_b=fallback_cmd_b,
-            scanner=scanner_value if isinstance(scanner_value, str) else "",
-            warning=f"{type(exc).__name__}: {exc}",
-        )
+        raise MobilityCalibrationError(f"{type(exc).__name__}: {exc}") from exc

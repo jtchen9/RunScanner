@@ -5,10 +5,9 @@ from typing import Optional, Tuple
 from TestGyro.DFRobot_RaspberryPi_DC_Motor import DFRobot_DC_Motor_IIC
 from icm20948 import ICM20948
 from robot_mobility_vl53l1x import check_blocked
-from config import MOTOR_MOVE_DISTANCE_MODEL
 from robot_mobility_calibration_registry import (
+    MobilityCalibrationError,
     MobilityCalibrationSnapshot,
-    fallback_snapshot,
     load_mobility_calibration,
 )
 
@@ -40,7 +39,7 @@ BUS = 1
 # physical names are opposite to the primitive's left flag.
 #
 # Important:
-# - Keep GZ_BIAS unchanged. GZ_BIAS is the stationary sensor offset.
+# - GZ_BIAS and distance coefficients come from the per-robot registry.
 # - Do not change the gyro integration or target-yaw logic here.
 # - Public turn_left()/turn_right() below adapt the physical command convention
 #   expected by NMS/world geometry.
@@ -91,10 +90,6 @@ SMALL_TURN_COMPOSITE_ANCHOR_DEG = 90.0
 SMALL_TURN_BETWEEN_LEGS_SEC = 1.0
 SMALL_TURN_FINAL_SETTLE_SEC = 0.5
 
-# Measured stationary bias of gz
-# GZ_BIAS = 0.41616  # Charlie
-GZ_BIAS = 0.3 # Delta, 9.0V
-
 # =========================================================
 # Limits / guards
 # =========================================================
@@ -135,10 +130,12 @@ def _sleep_checked(sec: float) -> None:
 
 
 def _production_calibration_snapshot() -> MobilityCalibrationSnapshot:
-    return load_mobility_calibration(
-        fallback_gz_bias=GZ_BIAS,
-        fallback_distance_model=MOTOR_MOVE_DISTANCE_MODEL,
-    )
+    return load_mobility_calibration()
+
+
+def _calibration_unavailable_detail(exc: Exception) -> str:
+    compact = "_".join(str(exc).split())
+    return f"MOBILITY_CALIBRATION_UNAVAILABLE {compact}"
 
 
 def _read_yaw_rate(imu, gz_bias: float) -> float:
@@ -184,24 +181,22 @@ def _run_move(
         return False, profile_detail
 
     cruise_speed = _move_cruise_speed_for_profile(profile)
-    calibration = calibration or _production_calibration_snapshot()
+    if calibration is None:
+        try:
+            calibration = _production_calibration_snapshot()
+        except MobilityCalibrationError as exc:
+            return False, _calibration_unavailable_detail(exc)
     calibration_override_active = (
         calibration_gz_bias is not None or motor_distance_override is not None
     )
     if calibration_override_active:
-        calibration = fallback_snapshot(
+        calibration = MobilityCalibrationSnapshot(
             scanner=calibration.scanner,
             gz_bias=(
                 calibration.gz_bias
                 if calibration_gz_bias is None
-                else calibration_gz_bias
+                else float(calibration_gz_bias)
             ),
-            cmd_a=calibration.cmd_a,
-            cmd_b=calibration.cmd_b,
-        )
-        calibration = MobilityCalibrationSnapshot(
-            scanner=calibration.scanner,
-            gz_bias=calibration.gz_bias,
             cmd_a=calibration.cmd_a,
             cmd_b=calibration.cmd_b,
             source="calibration_override",
@@ -356,7 +351,11 @@ def _run_turn(
     if angle_deg < MIN_TURN_ANGLE_DEG or angle_deg > MAX_TURN_ANGLE_DEG:
         return False, f"BAD_COMMAND_ARGS angle_deg={angle_deg}"
 
-    calibration = calibration or _production_calibration_snapshot()
+    if calibration is None:
+        try:
+            calibration = _production_calibration_snapshot()
+        except MobilityCalibrationError as exc:
+            return False, _calibration_unavailable_detail(exc)
 
     ok_m, m, detail_m = _motor_begin()
     if not ok_m:
@@ -502,7 +501,10 @@ def _run_composite_signed_turn(angle_deg: float) -> Tuple[bool, str]:
     The public sign convention is preserved.  The NMS and command payload do
     not need to know that the robot used two physical turns internally.
     """
-    calibration = _production_calibration_snapshot()
+    try:
+        calibration = _production_calibration_snapshot()
+    except MobilityCalibrationError as exc:
+        return False, _calibration_unavailable_detail(exc)
     requested_abs = abs(angle_deg)
     second_leg_abs = SMALL_TURN_COMPOSITE_ANCHOR_DEG - requested_abs
 
@@ -572,8 +574,8 @@ def turn_signed(angle_deg: float) -> Tuple[bool, str]:
         +angle_deg  => physical left / CCW turn
         -angle_deg  => physical right / CW turn
 
-    Keep GZ_BIAS unchanged. The gyro bias is a stationary sensor offset; the
-    sign difference is only the command convention.
+    GZ_BIAS comes from the per-robot registry. The sign difference here is
+    only the command convention.
 
     Robot command dispatchers for mobility.turn should call this function
     instead of manually mapping positive angles to turn_right().
