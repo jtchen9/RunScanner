@@ -2,18 +2,14 @@
   "robots": {
     "twin-scout-charlie": {
       "buck_voltage_v": 8.2,
-      "calibrated_at_utc": "2026-08-14T05:08:24.924493+00:00",
+      "calibrated_at_utc": "2026-08-14T07:06:11.422538+00:00",
       "distance_model": {
-        "actual_a": 0.7746547522339562,
-        "actual_b": 0.05229691307879758,
-        "cmd_a": 1.2908976510067114,
-        "cmd_b": -0.06750996224832195
+        "actual_a": 0.7836921202274574,
+        "actual_b": 0.054524776604386704,
+        "cmd_a": 1.2760112985565835,
+        "cmd_b": -0.0695742309984711
       },
-      "gz_bias": -0.962639673,
-      "short_move": {
-        "kick_distance_m": 0.045,
-        "skip_threshold_m": 0.0225
-      },
+      "gz_bias": -0.45,
       "production_loader_enabled": true,
       "quality": {
         "distance": {
@@ -22,23 +18,24 @@
             "r_squared": true,
             "verify_distance": true
           },
-          "fit_rmse_m": 0.01859949751686246,
-          "r_squared": 0.998830608743089,
+          "fit_rmse_m": 0.0263874539398268,
+          "r_squared": 0.9977028614514563,
           "status": "pass",
-          "verification_distance_error_m": 0.004999999999999893
+          "verification_distance_error_m": 0.040000000000000036
         },
         "gz_bias": {
           "checks": {
-            "negative_slope": true,
-            "observed_sign_crossing": true,
-            "r_squared": true,
-            "regression_rmse": true,
-            "zero_inside_test_range": true
+            "finite_gz_bias": true,
+            "minimum_stationary_sample_count": true,
+            "physical_3m_walk_accepted": true
           },
-          "preferred_central_region": true,
           "status": "pass"
         },
         "status": "pass"
+      },
+      "short_move": {
+        "kick_distance_m": 0.06,
+        "skip_threshold_m": 0.03
       },
       "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
     },
@@ -52,10 +49,6 @@
         "cmd_b": -0.05996700350587745
       },
       "gz_bias": 0.3067374709591769,
-      "short_move": {
-        "kick_distance_m": 0.08,
-        "skip_threshold_m": 0.04
-      },
       "production_loader_enabled": true,
       "quality": {
         "checks": {
@@ -73,6 +66,10 @@
         "status": "pass",
         "verification_distance_error_m": 0.025000000000000022,
         "verification_lateral_shift_m": -0.05
+      },
+      "short_move": {
+        "kick_distance_m": 0.08,
+        "skip_threshold_m": 0.04
       },
       "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
     }

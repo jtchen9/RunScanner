@@ -33,6 +33,7 @@ if str(ROBOT_ROOT) not in sys.path:
     sys.path.insert(0, str(ROBOT_ROOT))
 
 import robot_mobility_motion as motion
+from robot_mobility_calibration_registry import fallback_snapshot
 
 
 # Fixed sequence. Non-monotonic order reduces correlation between test distance
@@ -151,6 +152,7 @@ def _prompt_retry(next_experiment: str) -> bool:
 
 
 def _execute_raw(
+    scanner: str,
     raw_motor_distance_m: float,
     gz_bias: float,
 ) -> Tuple[bool, str]:
@@ -158,12 +160,14 @@ def _execute_raw(
     return motion._run_move(
         forward=True,
         distance_m=requested,
+        calibration=_calibration_bootstrap_snapshot(scanner, gz_bias),
         calibration_gz_bias=gz_bias,
         motor_distance_override=raw_motor_distance_m,
     )
 
 
 def _execute_candidate_calibrated(
+    scanner: str,
     desired_distance_m: float,
     cmd_a: float,
     cmd_b: float,
@@ -173,8 +177,40 @@ def _execute_candidate_calibrated(
     return motion._run_move(
         forward=True,
         distance_m=desired_distance_m,
+        calibration=_calibration_bootstrap_snapshot(
+            scanner,
+            gz_bias,
+            cmd_a=cmd_a,
+            cmd_b=cmd_b,
+        ),
         calibration_gz_bias=gz_bias,
         motor_distance_override=motor_distance,
+    )
+
+
+def _calibration_bootstrap_snapshot(
+    scanner: str,
+    gz_bias: float,
+    *,
+    cmd_a: Optional[float] = None,
+    cmd_b: Optional[float] = None,
+):
+    """Build a calibration-only snapshot without consulting production state.
+
+    The strict production loader must continue to reject robots that have no
+    accepted registry entry.  Guided calibration is the one explicit bootstrap
+    path: raw trials use the generic starting distance model, while candidate
+    verification may supply the newly fitted coefficients.
+    """
+    model = motion.MOTOR_MOVE_DISTANCE_MODEL
+    effective_cmd_a = float(model["cmd_a"]) if cmd_a is None else float(cmd_a)
+    effective_cmd_b = float(model["cmd_b"]) if cmd_b is None else float(cmd_b)
+    return fallback_snapshot(
+        scanner=scanner,
+        gz_bias=float(gz_bias),
+        cmd_a=effective_cmd_a,
+        cmd_b=effective_cmd_b,
+        warning="calibration_bootstrap_not_for_production",
     )
 
 
@@ -200,11 +236,12 @@ def _measure_one(
     time.sleep(3.0)
 
     if raw_motor_distance_m is not None:
-        ok, detail = _execute_raw(raw_motor_distance_m, gz_bias)
+        ok, detail = _execute_raw(scanner, raw_motor_distance_m, gz_bias)
     else:
         if desired_distance_m is None or cmd_a is None or cmd_b is None:
             raise RuntimeError("candidate verification parameters are incomplete")
         ok, detail = _execute_candidate_calibrated(
+            scanner,
             desired_distance_m,
             cmd_a,
             cmd_b,
@@ -506,6 +543,7 @@ def _run_gz_bias_stage(
         ok, detail = motion._run_move(
             forward=True,
             distance_m=GZ_TUNING_DISTANCE_M,
+            calibration=_calibration_bootstrap_snapshot(scanner, candidate),
             calibration_gz_bias=candidate,
         )
         trial: Dict[str, object] = {

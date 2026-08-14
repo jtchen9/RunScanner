@@ -13,7 +13,15 @@ MODULE_PATH = PROJECT_ROOT / "TestGyro" / "robot_mobility_calibrate.py"
 def load_module():
     motion = types.ModuleType("robot_mobility_motion")
     motion.MIN_MOVE_DISTANCE_M = 0.01
+    motion.MOTOR_MOVE_DISTANCE_MODEL = {"cmd_a": 1.1, "cmd_b": -0.07}
     sys.modules["robot_mobility_motion"] = motion
+    registry = types.ModuleType("robot_mobility_calibration_registry")
+
+    def fallback_snapshot(**kwargs):
+        return types.SimpleNamespace(**kwargs)
+
+    registry.fallback_snapshot = fallback_snapshot
+    sys.modules["robot_mobility_calibration_registry"] = registry
     spec = importlib.util.spec_from_file_location("calibration_under_test", MODULE_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -70,6 +78,10 @@ class GzWalkingCalibrationTests(unittest.TestCase):
         self.assertEqual(result["accepted_trial"], 1)
         self.assertEqual(calls[0]["distance_m"], 3.0)
         self.assertAlmostEqual(calls[0]["calibration_gz_bias"], -0.262639673)
+        self.assertEqual(calls[0]["calibration"].scanner, "twin-scout-charlie")
+        self.assertAlmostEqual(calls[0]["calibration"].gz_bias, -0.262639673)
+        self.assertEqual(calls[0]["calibration"].cmd_a, 1.1)
+        self.assertEqual(calls[0]["calibration"].cmd_b, -0.07)
         self.assertEqual(rows[0]["phase"], "gz_bias_stationary_seed")
         self.assertEqual(rows[1]["phase"], "gz_bias_physical_walk")
         self.assertTrue(rows[1]["accepted"])
@@ -101,6 +113,39 @@ class GzWalkingCalibrationTests(unittest.TestCase):
             self.assertEqual(self.module._prompt_gz_candidate(-0.26), -0.31)
         finally:
             builtins.input = original_input
+
+    def test_raw_and_verification_paths_always_supply_bootstrap_snapshot(self):
+        calls = []
+        original_run_move = getattr(self.module.motion, "_run_move", None)
+        try:
+            self.module.motion._run_move = lambda **kwargs: (
+                calls.append(kwargs) or (True, "ok")
+            )
+            self.module._execute_raw(
+                "twin-scout-bravo",
+                1.0,
+                -0.61,
+            )
+            self.module._execute_candidate_calibrated(
+                "twin-scout-bravo",
+                1.0,
+                1.25,
+                -0.08,
+                -0.61,
+            )
+        finally:
+            if original_run_move is None:
+                delattr(self.module.motion, "_run_move")
+            else:
+                self.module.motion._run_move = original_run_move
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["calibration"].scanner, "twin-scout-bravo")
+        self.assertEqual(calls[0]["calibration"].cmd_a, 1.1)
+        self.assertEqual(calls[0]["calibration"].cmd_b, -0.07)
+        self.assertEqual(calls[1]["calibration"].scanner, "twin-scout-bravo")
+        self.assertEqual(calls[1]["calibration"].cmd_a, 1.25)
+        self.assertEqual(calls[1]["calibration"].cmd_b, -0.08)
 
     def test_distance_sequence_and_disabled_diagnostic_are_retained(self):
         self.assertEqual(
