@@ -13,14 +13,16 @@ MODULE_PATH = PROJECT_ROOT / "TestGyro" / "robot_mobility_calibrate.py"
 def load_module():
     motion = types.ModuleType("robot_mobility_motion")
     motion.MIN_MOVE_DISTANCE_M = 0.01
-    motion.MOTOR_MOVE_DISTANCE_MODEL = {"cmd_a": 1.1, "cmd_b": -0.07}
     sys.modules["robot_mobility_motion"] = motion
+    config = types.ModuleType("config")
+    config.MOTOR_MOVE_DISTANCE_MODEL = {"cmd_a": 1.1, "cmd_b": -0.07}
+    sys.modules["config"] = config
     registry = types.ModuleType("robot_mobility_calibration_registry")
 
-    def fallback_snapshot(**kwargs):
+    def mobility_calibration_snapshot(**kwargs):
         return types.SimpleNamespace(**kwargs)
 
-    registry.fallback_snapshot = fallback_snapshot
+    registry.MobilityCalibrationSnapshot = mobility_calibration_snapshot
     sys.modules["robot_mobility_calibration_registry"] = registry
     spec = importlib.util.spec_from_file_location("calibration_under_test", MODULE_PATH)
     module = importlib.util.module_from_spec(spec)

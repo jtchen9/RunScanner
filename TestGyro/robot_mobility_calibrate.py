@@ -33,7 +33,8 @@ if str(ROBOT_ROOT) not in sys.path:
     sys.path.insert(0, str(ROBOT_ROOT))
 
 import robot_mobility_motion as motion
-from robot_mobility_calibration_registry import fallback_snapshot
+from config import MOTOR_MOVE_DISTANCE_MODEL
+from robot_mobility_calibration_registry import MobilityCalibrationSnapshot
 
 
 # Fixed sequence. Non-monotonic order reduces correlation between test distance
@@ -202,14 +203,15 @@ def _calibration_bootstrap_snapshot(
     path: raw trials use the generic starting distance model, while candidate
     verification may supply the newly fitted coefficients.
     """
-    model = motion.MOTOR_MOVE_DISTANCE_MODEL
+    model = MOTOR_MOVE_DISTANCE_MODEL
     effective_cmd_a = float(model["cmd_a"]) if cmd_a is None else float(cmd_a)
     effective_cmd_b = float(model["cmd_b"]) if cmd_b is None else float(cmd_b)
-    return fallback_snapshot(
+    return MobilityCalibrationSnapshot(
         scanner=scanner,
         gz_bias=float(gz_bias),
         cmd_a=effective_cmd_a,
         cmd_b=effective_cmd_b,
+        source="calibration_bootstrap",
         warning="calibration_bootstrap_not_for_production",
     )
 
