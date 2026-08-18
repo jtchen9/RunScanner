@@ -5,7 +5,6 @@ from typing import Optional, Tuple
 from TestGyro.DFRobot_RaspberryPi_DC_Motor import DFRobot_DC_Motor_IIC
 from icm20948 import ICM20948
 from robot_mobility_vl53l1x import check_blocked
-from config import MOTOR_MOVE_DISTANCE_MODEL
 from robot_mobility_calibration_registry import (
     MobilityCalibrationSnapshot,
     load_mobility_calibration,
@@ -135,10 +134,7 @@ def _sleep_checked(sec: float) -> None:
 
 
 def _production_calibration_snapshot() -> MobilityCalibrationSnapshot:
-    return load_mobility_calibration(
-        fallback_gz_bias=GZ_BIAS,
-        fallback_distance_model=MOTOR_MOVE_DISTANCE_MODEL,
-    )
+    return load_mobility_calibration()
 
 
 def _read_yaw_rate(imu, gz_bias: float) -> float:
@@ -297,8 +293,6 @@ def _run_move(
             m.motor_movement([m.M2], m.CCW, cruise_speed)
             _sleep_checked(cruise_time)
 
-        _safe_stop(m)
-
         direction = "forward" if forward else "backward"
         return True, (
             f"{direction}_done "
@@ -315,8 +309,12 @@ def _run_move(
         )
 
     except Exception as e:
-        _safe_stop(m)
         return False, f"MOVE_EXEC_FAIL {e}"
+
+    finally:
+        # Calibration is interactive, so Ctrl+C or another Python-level exit
+        # must not leave forward or backward motor drive active.
+        _safe_stop(m)
     
 
 def _run_turn(

@@ -135,7 +135,38 @@ def _prompt_float_cm(prompt: str) -> float:
         if not math.isfinite(number):
             print("Enter a finite number in centimetres.")
             continue
+        if number < 0.0:
+            print("Enter a non-negative distance in centimetres.")
+            continue
         return number / 100.0
+
+
+def _prompt_buck_voltage(previous: Optional[Dict[str, object]]) -> float:
+    previous_value = (
+        previous.get("buck_voltage_v", DEFAULT_BUCK_VOLTAGE_V)
+        if isinstance(previous, dict)
+        else DEFAULT_BUCK_VOLTAGE_V
+    )
+    try:
+        default_value = float(previous_value)
+    except (TypeError, ValueError):
+        default_value = DEFAULT_BUCK_VOLTAGE_V
+
+    while True:
+        answer = input(
+            f"Measured motor buck voltage for this calibration [{default_value:.1f} V]: "
+        ).strip()
+        if not answer:
+            return default_value
+        try:
+            value = float(answer)
+        except ValueError:
+            print("Enter a finite positive voltage.")
+            continue
+        if not math.isfinite(value) or value <= 0.0:
+            print("Enter a finite positive voltage.")
+            continue
+        return value
 
 
 def _prompt_retry(next_experiment: str) -> bool:
@@ -773,6 +804,7 @@ def _prompt_final_action(has_previous: bool) -> str:
 
 def _write_registry(
     scanner: str,
+    buck_voltage_v: float,
     gz_bias: float,
     fit: Dict[str, float],
     quality: Dict[str, object],
@@ -787,12 +819,6 @@ def _write_registry(
             f"{REGISTRY_PATH.stem}.{_filename_timestamp()}.bak.json"
         )
         shutil.copy2(REGISTRY_PATH, backup)
-
-    previous = robots.get(scanner)
-    if isinstance(previous, dict):
-        buck_voltage_v = previous.get("buck_voltage_v", DEFAULT_BUCK_VOLTAGE_V)
-    else:
-        buck_voltage_v = DEFAULT_BUCK_VOLTAGE_V
 
     robots[scanner] = {
         "buck_voltage_v": buck_voltage_v,
@@ -910,9 +936,13 @@ def _run_session(scanner: str) -> str:
     else:
         old_model = previous.get("distance_model") or {}
         print(f"Previous GZ_BIAS:          {previous.get('gz_bias')}")
+        print(f"Previous buck voltage:     {previous.get('buck_voltage_v')} V")
         if isinstance(old_model, dict):
             print("Previous distance cmd_a/b: "
                   f"{old_model.get('cmd_a')}, {old_model.get('cmd_b')}")
+
+    buck_voltage_v = _prompt_buck_voltage(previous)
+    print(f"Calibration buck voltage:  {buck_voltage_v:.3f} V")
 
     gz_stage = _run_gz_bias_stage(scanner, previous)
     gz_bias = float(gz_stage["gz_bias"])
@@ -937,6 +967,7 @@ def _run_session(scanner: str) -> str:
         "distance_calibration": distance_stage,
         "combined_quality": combined_quality,
         "candidate": {
+            "buck_voltage_v": buck_voltage_v,
             "gz_bias": gz_bias, "distance_model": fit,
             "short_move": {"kick_distance_m": kick_distance_m,
                            "skip_threshold_m": kick_distance_m / 2.0},
@@ -950,6 +981,7 @@ def _run_session(scanner: str) -> str:
     print("OVERALL CALIBRATION CONCLUSION")
     print("============================================================")
     print(f"Combined quality:          {str(combined_quality['status']).upper()}")
+    print(f"Buck voltage:              {buck_voltage_v:.3f} V")
     print(f"Accepted GZ_BIAS:          {gz_bias:+.9f}")
     print("GZ calibration method:     static seed + accepted 3 m physical walk")
     print(
@@ -973,7 +1005,14 @@ def _run_session(scanner: str) -> str:
 
     action = _prompt_final_action(previous is not None)
     if action == "update":
-        _write_registry(scanner, gz_bias, fit, combined_quality, kick_distance_m)
+        _write_registry(
+            scanner,
+            buck_voltage_v,
+            gz_bias,
+            fit,
+            combined_quality,
+            kick_distance_m,
+        )
         print(f"Registry updated:          {REGISTRY_PATH}")
         print("Production loader:         enabled for the next motion primitive")
     elif action == "keep":
