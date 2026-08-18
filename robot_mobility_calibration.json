@@ -1,5 +1,44 @@
 {
   "robots": {
+    "twin-scout-alpha": {
+      "buck_voltage_v": 8.2,
+      "calibrated_at_utc": "2026-08-14T09:37:03.022822+00:00",
+      "distance_model": {
+        "actual_a": 0.7389723801787165,
+        "actual_b": 0.06498375304630388,
+        "cmd_a": 1.3532305493720285,
+        "cmd_b": -0.08793799983510603
+      },
+      "gz_bias": 0.42,
+      "production_loader_enabled": true,
+      "quality": {
+        "distance": {
+          "checks": {
+            "fit_rmse": true,
+            "r_squared": true,
+            "verify_distance": true
+          },
+          "fit_rmse_m": 0.025833505847453773,
+          "r_squared": 0.9975241993143555,
+          "status": "pass",
+          "verification_distance_error_m": 0.030000000000000027
+        },
+        "gz_bias": {
+          "checks": {
+            "finite_gz_bias": true,
+            "minimum_stationary_sample_count": true,
+            "physical_3m_walk_accepted": true
+          },
+          "status": "pass"
+        },
+        "status": "pass"
+      },
+      "short_move": {
+        "kick_distance_m": 0.055,
+        "skip_threshold_m": 0.0275
+      },
+      "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
+    },
     "twin-scout-bravo": {
       "buck_voltage_v": 8.2,
       "calibrated_at_utc": "2026-08-14T09:14:49.328991+00:00",
