@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 import time
-from typing import Optional, Tuple
+from typing import Tuple
 
 from TestGyro.DFRobot_RaspberryPi_DC_Motor import DFRobot_DC_Motor_IIC
 from icm20948 import ICM20948
 from robot_mobility_vl53l1x import check_blocked
-from robot_mobility_calibration_registry import (
-    MobilityCalibrationError,
-    MobilityCalibrationSnapshot,
-    load_mobility_calibration,
-)
+from config import apply_motor_move_calibration
 
 TOF_STOP_THRESHOLD_MM = 300
 MOVE_DT_SEC = 0.05
@@ -39,7 +35,7 @@ BUS = 1
 # physical names are opposite to the primitive's left flag.
 #
 # Important:
-# - GZ_BIAS and distance coefficients come from the per-robot registry.
+# - Keep GZ_BIAS unchanged. GZ_BIAS is the stationary sensor offset.
 # - Do not change the gyro integration or target-yaw logic here.
 # - Public turn_left()/turn_right() below adapt the physical command convention
 #   expected by NMS/world geometry.
@@ -81,6 +77,7 @@ TURN_CRUISE_SPEED = 40
 TURN_KICK_TIME_SEC = 0.3
 TURN_DT = 0.02
 TURN_STOP_MARGIN_DEG = 0.0
+TURN_TIMEOUT_SEC = 10.0
 
 # Direct turns smaller than this threshold can reach their target during the
 # fixed kick, before _run_turn() begins checking its target.  Build those
@@ -89,6 +86,10 @@ SMALL_TURN_COMPOSITE_THRESHOLD_DEG = 30.0
 SMALL_TURN_COMPOSITE_ANCHOR_DEG = 90.0
 SMALL_TURN_BETWEEN_LEGS_SEC = 1.0
 SMALL_TURN_FINAL_SETTLE_SEC = 0.5
+
+# Measured stationary bias of gz
+# GZ_BIAS = 0.41616  # Charlie
+GZ_BIAS = 0.3 # Delta, 9.0V
 
 # =========================================================
 # Limits / guards
@@ -129,18 +130,9 @@ def _sleep_checked(sec: float) -> None:
         time.sleep(sec)
 
 
-def _production_calibration_snapshot() -> MobilityCalibrationSnapshot:
-    return load_mobility_calibration()
-
-
-def _calibration_unavailable_detail(exc: Exception) -> str:
-    compact = "_".join(str(exc).split())
-    return f"MOBILITY_CALIBRATION_UNAVAILABLE {compact}"
-
-
-def _read_yaw_rate(imu, gz_bias: float) -> float:
+def _read_yaw_rate(imu) -> float:
     ax, ay, az, gx, gy, gz = imu.read_accelerometer_gyro_data()
-    return gz - gz_bias
+    return gz - GZ_BIAS
 
 
 def _clamp_speed(v: float) -> int:
@@ -164,16 +156,8 @@ def _move_cruise_speed_for_profile(move_profile: str) -> int:
     return MOVE_CRUISE_SPEED
 
 
-def _run_move(
-    forward: bool,
-    distance_m: float,
-    move_profile: str | None = None,
-    *,
-    calibration: Optional[MobilityCalibrationSnapshot] = None,
-    calibration_gz_bias: Optional[float] = None,
-    motor_distance_override: Optional[float] = None,
-) -> Tuple[bool, str]:
-    if distance_m <= 0.0 or distance_m > MAX_MOVE_DISTANCE_M:
+def _run_move(forward: bool, distance_m: float, move_profile: str | None = None) -> Tuple[bool, str]:
+    if distance_m < MIN_MOVE_DISTANCE_M or distance_m > MAX_MOVE_DISTANCE_M:
         return False, f"BAD_COMMAND_ARGS distance_m={distance_m}"
 
     ok_profile, profile, profile_detail = _normalize_move_profile(move_profile)
@@ -181,55 +165,13 @@ def _run_move(
         return False, profile_detail
 
     cruise_speed = _move_cruise_speed_for_profile(profile)
-    if calibration is None:
-        try:
-            calibration = _production_calibration_snapshot()
-        except MobilityCalibrationError as exc:
-            return False, _calibration_unavailable_detail(exc)
-    calibration_override_active = (
-        calibration_gz_bias is not None or motor_distance_override is not None
-    )
-    if calibration_override_active:
-        calibration = MobilityCalibrationSnapshot(
-            scanner=calibration.scanner,
-            gz_bias=(
-                calibration.gz_bias
-                if calibration_gz_bias is None
-                else float(calibration_gz_bias)
-            ),
-            cmd_a=calibration.cmd_a,
-            cmd_b=calibration.cmd_b,
-            source="calibration_override",
-        )
-
-    if (
-        forward
-        and
-        not calibration_override_active
-        and distance_m < calibration.skip_threshold_m
-    ):
-        return True, (
-            "short_move_skipped "
-            f"distance_m={distance_m:.3f} "
-            f"skip_threshold_m={calibration.skip_threshold_m:.3f} "
-            f"expected_residual_m={distance_m:.3f} "
-            f"{calibration.detail()}"
-        )
-
-    if distance_m < MIN_MOVE_DISTANCE_M:
-        return False, f"BAD_COMMAND_ARGS distance_m={distance_m}"
 
     ok, m, detail = _motor_begin()
     if not ok:
         return False, detail
 
-    motor_distance_m = (
-        calibration.motor_distance(distance_m)
-        if motor_distance_override is None
-        else max(0.0, float(motor_distance_override))
-    )
+    motor_distance_m = apply_motor_move_calibration(distance_m)
     cruise_time = motor_distance_m * MOVE_SEC_PER_METER
-    move_execution = "kick_only" if motor_distance_m == 0.0 else "kick_plus_cruise"
 
     yaw_deg = 0.0
     max_abs_yaw_deg = 0.0
@@ -251,7 +193,7 @@ def _run_move(
                 m.motor_movement([m.M2], m.CW,  base_speed)
                 return
 
-            yaw_rate = _read_yaw_rate(imu, calibration.gz_bias)
+            yaw_rate = _read_yaw_rate(imu)
             yaw_deg += yaw_rate * dt
             max_abs_yaw_deg = max(max_abs_yaw_deg, abs(yaw_deg))
 
@@ -324,7 +266,6 @@ def _run_move(
         direction = "forward" if forward else "backward"
         return True, (
             f"{direction}_done "
-            f"move_execution={move_execution} "
             f"distance_m={distance_m:.3f} "
             f"motor_distance_m={motor_distance_m:.3f} "
             f"kick_time={MOVE_KICK_TIME_SEC:.3f} "
@@ -333,8 +274,7 @@ def _run_move(
             f"cruise_speed={cruise_speed} "
             f"heading_hold_enabled={HEADING_HOLD_ENABLED} "
             f"final_yaw_deg={yaw_deg:.3f} "
-            f"max_abs_yaw_deg={max_abs_yaw_deg:.3f} "
-            f"{calibration.detail()}"
+            f"max_abs_yaw_deg={max_abs_yaw_deg:.3f}"
         )
 
     except Exception as e:
@@ -342,20 +282,9 @@ def _run_move(
         return False, f"MOVE_EXEC_FAIL {e}"
     
 
-def _run_turn(
-    left: bool,
-    angle_deg: float,
-    *,
-    calibration: Optional[MobilityCalibrationSnapshot] = None,
-) -> Tuple[bool, str]:
+def _run_turn(left: bool, angle_deg: float) -> Tuple[bool, str]:
     if angle_deg < MIN_TURN_ANGLE_DEG or angle_deg > MAX_TURN_ANGLE_DEG:
         return False, f"BAD_COMMAND_ARGS angle_deg={angle_deg}"
-
-    if calibration is None:
-        try:
-            calibration = _production_calibration_snapshot()
-        except MobilityCalibrationError as exc:
-            return False, _calibration_unavailable_detail(exc)
 
     ok_m, m, detail_m = _motor_begin()
     if not ok_m:
@@ -368,6 +297,7 @@ def _run_turn(
 
     target_yaw = -abs(angle_deg) if left else abs(angle_deg)
     yaw_deg = 0.0
+    turn_started_at = None
 
     try:
         _safe_stop(m)
@@ -375,7 +305,8 @@ def _run_turn(
 
         # zero angle and timer BEFORE moving
         yaw_deg = 0.0
-        t_prev = time.time()
+        turn_started_at = time.monotonic()
+        t_prev = turn_started_at
 
         # kick phase
         if left:
@@ -385,14 +316,26 @@ def _run_turn(
             m.motor_movement([m.M1], m.CW, TURN_KICK_SPEED)    # right backward
             m.motor_movement([m.M2], m.CW, TURN_KICK_SPEED)    # left forward
 
-        t_kick_start = time.time()
+        t_kick_start = turn_started_at
         while True:
-            t_now = time.time()
+            t_now = time.monotonic()
             dt = t_now - t_prev
             t_prev = t_now
 
-            yaw_rate = _read_yaw_rate(imu, calibration.gz_bias)
+            yaw_rate = _read_yaw_rate(imu)
             yaw_deg += yaw_rate * dt
+
+            elapsed_sec = t_now - turn_started_at
+            if elapsed_sec >= TURN_TIMEOUT_SEC:
+                return False, (
+                    "TURN_TIMEOUT "
+                    "phase=kick "
+                    f"angle_deg={angle_deg:.3f} "
+                    f"target_yaw_deg={target_yaw:.3f} "
+                    f"measured_yaw_deg={yaw_deg:.3f} "
+                    f"elapsed_sec={elapsed_sec:.3f} "
+                    f"timeout_sec={TURN_TIMEOUT_SEC:.3f}"
+                )
 
             if (t_now - t_kick_start) >= TURN_KICK_TIME_SEC:
                 break
@@ -408,12 +351,24 @@ def _run_turn(
             m.motor_movement([m.M2], m.CW, TURN_CRUISE_SPEED)
 
         while True:
-            t_now = time.time()
+            t_now = time.monotonic()
             dt = t_now - t_prev
             t_prev = t_now
 
-            yaw_rate = _read_yaw_rate(imu, calibration.gz_bias)
+            yaw_rate = _read_yaw_rate(imu)
             yaw_deg += yaw_rate * dt
+
+            elapsed_sec = t_now - turn_started_at
+            if elapsed_sec >= TURN_TIMEOUT_SEC:
+                return False, (
+                    "TURN_TIMEOUT "
+                    "phase=cruise "
+                    f"angle_deg={angle_deg:.3f} "
+                    f"target_yaw_deg={target_yaw:.3f} "
+                    f"measured_yaw_deg={yaw_deg:.3f} "
+                    f"elapsed_sec={elapsed_sec:.3f} "
+                    f"timeout_sec={TURN_TIMEOUT_SEC:.3f}"
+                )
 
             if left:
                 if yaw_deg <= (target_yaw + TURN_STOP_MARGIN_DEG):
@@ -424,19 +379,20 @@ def _run_turn(
 
             time.sleep(TURN_DT)
 
-        _safe_stop(m)
-
         direction = "turn_left" if left else "turn_right"
         return True, (
             f"{direction}_done "
             f"angle_deg={angle_deg:.3f} "
-            f"measured_yaw_deg={yaw_deg:.3f} "
-            f"{calibration.detail()}"
+            f"measured_yaw_deg={yaw_deg:.3f}"
         )
 
     except Exception as e:
-        _safe_stop(m)
         return False, f"TURN_EXEC_FAIL {e}"
+
+    finally:
+        # Every exit path—including timeout, sensor exception, or normal
+        # completion—must remove motor drive before returning to the agent.
+        _safe_stop(m)
 
 
 def move_forward(distance_m: float, move_profile: str | None = None) -> Tuple[bool, str]:
@@ -447,11 +403,7 @@ def move_backward(distance_m: float, move_profile: str | None = None) -> Tuple[b
     return _run_move(forward=False, distance_m=distance_m, move_profile=move_profile)
 
 
-def turn_left(
-    angle_deg: float,
-    *,
-    calibration: Optional[MobilityCalibrationSnapshot] = None,
-) -> Tuple[bool, str]:
+def turn_left(angle_deg: float) -> Tuple[bool, str]:
     """Physical left / CCW turn.
 
     The low-level _run_turn(left=...) primitive is opposite to the public
@@ -460,19 +412,11 @@ def turn_left(
     This preserves the NMS/world convention:
         positive signed command angle => physical left / CCW.
     """
-    ok, detail = _run_turn(
-        left=False,
-        angle_deg=angle_deg,
-        calibration=calibration,
-    )
+    ok, detail = _run_turn(left=False, angle_deg=angle_deg)
     return ok, f"physical_turn_left_ccw {detail}"
 
 
-def turn_right(
-    angle_deg: float,
-    *,
-    calibration: Optional[MobilityCalibrationSnapshot] = None,
-) -> Tuple[bool, str]:
+def turn_right(angle_deg: float) -> Tuple[bool, str]:
     """Physical right / CW turn.
 
     The low-level _run_turn(left=...) primitive is opposite to the public
@@ -481,11 +425,7 @@ def turn_right(
     This preserves the NMS/world convention:
         negative signed command angle => physical right / CW.
     """
-    ok, detail = _run_turn(
-        left=True,
-        angle_deg=angle_deg,
-        calibration=calibration,
-    )
+    ok, detail = _run_turn(left=True, angle_deg=angle_deg)
     return ok, f"physical_turn_right_cw {detail}"
 
 
@@ -501,10 +441,6 @@ def _run_composite_signed_turn(angle_deg: float) -> Tuple[bool, str]:
     The public sign convention is preserved.  The NMS and command payload do
     not need to know that the robot used two physical turns internally.
     """
-    try:
-        calibration = _production_calibration_snapshot()
-    except MobilityCalibrationError as exc:
-        return False, _calibration_unavailable_detail(exc)
     requested_abs = abs(angle_deg)
     second_leg_abs = SMALL_TURN_COMPOSITE_ANCHOR_DEG - requested_abs
 
@@ -527,10 +463,7 @@ def _run_composite_signed_turn(angle_deg: float) -> Tuple[bool, str]:
         first_turn = turn_right
         second_turn = turn_left
 
-    ok_first, detail_first = first_turn(
-        SMALL_TURN_COMPOSITE_ANCHOR_DEG,
-        calibration=calibration,
-    )
+    ok_first, detail_first = first_turn(SMALL_TURN_COMPOSITE_ANCHOR_DEG)
     if not ok_first:
         return False, (
             "COMPOSITE_TURN_LEG1_FAIL "
@@ -541,10 +474,7 @@ def _run_composite_signed_turn(angle_deg: float) -> Tuple[bool, str]:
 
     _sleep_checked(SMALL_TURN_BETWEEN_LEGS_SEC)
 
-    ok_second, detail_second = second_turn(
-        second_leg_abs,
-        calibration=calibration,
-    )
+    ok_second, detail_second = second_turn(second_leg_abs)
     if not ok_second:
         return False, (
             "COMPOSITE_TURN_LEG2_FAIL "
@@ -574,8 +504,8 @@ def turn_signed(angle_deg: float) -> Tuple[bool, str]:
         +angle_deg  => physical left / CCW turn
         -angle_deg  => physical right / CW turn
 
-    GZ_BIAS comes from the per-robot registry. The sign difference here is
-    only the command convention.
+    Keep GZ_BIAS unchanged. The gyro bias is a stationary sensor offset; the
+    sign difference is only the command convention.
 
     Robot command dispatchers for mobility.turn should call this function
     instead of manually mapping positive angles to turn_right().
