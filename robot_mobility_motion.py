@@ -8,7 +8,6 @@ from robot_mobility_vl53l1x import check_blocked
 from config import MOTOR_MOVE_DISTANCE_MODEL
 from robot_mobility_calibration_registry import (
     MobilityCalibrationSnapshot,
-    fallback_snapshot,
     load_mobility_calibration,
 )
 
@@ -187,19 +186,13 @@ def _run_move(
     cruise_speed = _move_cruise_speed_for_profile(profile)
     calibration = calibration or _production_calibration_snapshot()
     if calibration_gz_bias is not None or motor_distance_override is not None:
-        calibration = fallback_snapshot(
+        calibration = MobilityCalibrationSnapshot(
             scanner=calibration.scanner,
             gz_bias=(
                 calibration.gz_bias
                 if calibration_gz_bias is None
                 else calibration_gz_bias
             ),
-            cmd_a=calibration.cmd_a,
-            cmd_b=calibration.cmd_b,
-        )
-        calibration = MobilityCalibrationSnapshot(
-            scanner=calibration.scanner,
-            gz_bias=calibration.gz_bias,
             cmd_a=calibration.cmd_a,
             cmd_b=calibration.cmd_b,
             source="calibration_override",
