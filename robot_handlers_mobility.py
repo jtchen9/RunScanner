@@ -11,6 +11,10 @@ from robot_mobility_motion import (
     move_backward,
     turn_signed,
 )
+from robot_mobility_calibration_registry import (
+    MobilityCalibrationError,
+    load_mobility_calibration,
+)
 
 PYTHON = "/usr/bin/python3"
 LOCATION_CAPTURE_SCRIPT = "/opt/_RunScanner/robot_mobility_location_capture.py"
@@ -191,7 +195,7 @@ def _parse_move_profile(args: Dict[str, Any]) -> Tuple[bool, str, str]:
     if not profile:
         profile = "default"
 
-    if profile not in {"default", "bump_crossing"}:
+    if profile not in {"default", "bump_crossing_up", "bump_crossing_down"}:
         return False, "default", f"BAD_COMMAND_ARGS unsupported move_profile={profile}"
 
     return True, profile, ""
@@ -417,6 +421,17 @@ def exec_mobility_turn_move_turn_forward(args: Dict[str, Any]) -> Tuple[bool, st
     if not ok_profile:
         return _fail_immediate("BAD_COMMAND_ARGS", detail_profile)
 
+    if move_profile != "default":
+        direction = (
+            "positive_y"
+            if move_profile == "bump_crossing_up"
+            else "negative_y"
+        )
+        try:
+            distance_m = load_mobility_calibration().bump_crossing_distance(direction)
+        except MobilityCalibrationError as exc:
+            return _fail_immediate("BUMP_CALIBRATION_FAIL", str(exc))
+
     pre_angle = _zero_small_angle(pre_angle)
     post_angle = _zero_small_angle(post_angle)
 
@@ -447,6 +462,11 @@ def exec_mobility_turn_move_turn_backward(args: Dict[str, Any]) -> Tuple[bool, s
     ok_profile, move_profile, detail_profile = _parse_move_profile(args)
     if not ok_profile:
         return _fail_immediate("BAD_COMMAND_ARGS", detail_profile)
+    if move_profile != "default":
+        return _fail_immediate(
+            "BAD_COMMAND_ARGS",
+            "bump-crossing profiles require mobility.turn_move_turn.forward",
+        )
 
     pre_angle = _zero_small_angle(pre_angle)
     post_angle = _zero_small_angle(post_angle)

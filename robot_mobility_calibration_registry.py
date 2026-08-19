@@ -11,6 +11,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 ROBOT_ROOT = Path(__file__).resolve().parent
 SCANNER_NAME_PATH = ROBOT_ROOT / "scanner_name.txt"
 REGISTRY_PATH = ROBOT_ROOT / "robot_mobility_calibration.json"
@@ -27,6 +28,8 @@ class MobilityCalibrationSnapshot:
     skip_threshold_m: float = 0.0
     calibrated_at_utc: str = ""
     warning: str = ""
+    bump_positive_y_distance_m: Optional[float] = None
+    bump_negative_y_distance_m: Optional[float] = None
 
     def motor_distance(self, desired_distance_m: float) -> float:
         value = self.cmd_a * float(desired_distance_m) + self.cmd_b
@@ -46,6 +49,22 @@ class MobilityCalibrationSnapshot:
             compact_warning = "_".join(self.warning.split())
             detail += f" calibration_warning={compact_warning}"
         return detail
+
+    def bump_crossing_distance(self, direction: str) -> float:
+        values = {
+            "positive_y": self.bump_positive_y_distance_m,
+            "negative_y": self.bump_negative_y_distance_m,
+        }
+        if direction not in values:
+            raise MobilityCalibrationError(
+                f"unsupported bump-crossing direction: {direction}"
+            )
+        value = values[direction]
+        if value is None:
+            raise MobilityCalibrationError(
+                f"bump-crossing calibration is missing for {direction}"
+            )
+        return value
 
 
 class MobilityCalibrationError(RuntimeError):
@@ -116,6 +135,27 @@ def load_mobility_calibration(
         else:
             raise ValueError("short_move must be an object")
 
+        bump_crossing = entry.get("bump_crossing")
+        bump_positive_y_distance_m: Optional[float] = None
+        bump_negative_y_distance_m: Optional[float] = None
+        if bump_crossing is not None:
+            if not isinstance(bump_crossing, dict):
+                raise ValueError("bump_crossing must be an object")
+            positive_y = bump_crossing.get("positive_y")
+            negative_y = bump_crossing.get("negative_y")
+            if not isinstance(positive_y, dict) or not isinstance(negative_y, dict):
+                raise ValueError("bump_crossing must contain positive_y and negative_y")
+            bump_positive_y_distance_m = _finite_number(
+                positive_y.get("command_distance_m"),
+                "bump_crossing.positive_y.command_distance_m",
+            )
+            bump_negative_y_distance_m = _finite_number(
+                negative_y.get("command_distance_m"),
+                "bump_crossing.negative_y.command_distance_m",
+            )
+            if bump_positive_y_distance_m <= 0.0 or bump_negative_y_distance_m <= 0.0:
+                raise ValueError("bump-crossing command distances must be positive")
+
         return MobilityCalibrationSnapshot(
             scanner=scanner,
             gz_bias=gz_bias,
@@ -125,6 +165,8 @@ def load_mobility_calibration(
             kick_distance_m=kick_distance_m,
             skip_threshold_m=skip_threshold_m,
             calibrated_at_utc=str(entry.get("calibrated_at_utc") or ""),
+            bump_positive_y_distance_m=bump_positive_y_distance_m,
+            bump_negative_y_distance_m=bump_negative_y_distance_m,
         )
     except MobilityCalibrationError:
         raise

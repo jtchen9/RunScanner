@@ -58,6 +58,9 @@ MAX_GZ_REGRESSION_RMSE_DEG = 3.0
 PREFERRED_GZ_ZERO_MIN = -3.0
 PREFERRED_GZ_ZERO_MAX = 3.0
 DEFAULT_BUCK_VOLTAGE_V = 8.2
+BUMP_POSITIVE_Y_START = (9.06, 4.30, 90.0)
+BUMP_NEGATIVE_Y_START = (9.06, 6.10, 270.0)
+BUMP_DEFAULT_COMMAND_DISTANCE_M = 2.0
 
 CALIBRATION_DIR = SCRIPT_DIR / "calibration"
 ACTIVE_CSV_PATH = CALIBRATION_DIR / "current_calibration.csv"
@@ -165,6 +168,27 @@ def _prompt_buck_voltage(previous: Optional[Dict[str, object]]) -> float:
             continue
         if not math.isfinite(value) or value <= 0.0:
             print("Enter a finite positive voltage.")
+            continue
+        return value
+
+
+def _prompt_bump_distance(direction_label: str, default_value: float) -> float:
+    while True:
+        answer = input(
+            f"Command distance for {direction_label} [{default_value:.3f} m]: "
+        ).strip()
+        if not answer:
+            return default_value
+        try:
+            value = float(answer)
+        except ValueError:
+            print("Enter a finite positive distance in metres.")
+            continue
+        if not math.isfinite(value) or not (0.0 < value <= motion.MAX_MOVE_DISTANCE_M):
+            print(
+                "Enter a distance greater than zero and no more than "
+                f"{motion.MAX_MOVE_DISTANCE_M:.3f} m."
+            )
             continue
         return value
 
@@ -809,6 +833,7 @@ def _write_registry(
     fit: Dict[str, float],
     quality: Dict[str, object],
     kick_distance_m: float,
+    bump_stage: Dict[str, object],
 ) -> None:
     registry = _load_registry()
     robots = registry["robots"]
@@ -832,6 +857,16 @@ def _write_registry(
         "short_move": {
             "kick_distance_m": kick_distance_m,
             "skip_threshold_m": kick_distance_m / 2.0,
+        },
+        "bump_crossing": {
+            "positive_y": {
+                "command_distance_m": bump_stage["positive_y_command_distance_m"],
+                "start": {"x": 9.06, "y": 4.30, "heading_deg": 90.0},
+            },
+            "negative_y": {
+                "command_distance_m": bump_stage["negative_y_command_distance_m"],
+                "start": {"x": 9.06, "y": 6.10, "heading_deg": 270.0},
+            },
         },
         "calibrated_at_utc": _utc_now(),
         "source": str(ACTIVE_CSV_PATH),
@@ -925,6 +960,132 @@ def _run_distance_stage(scanner: str, gz_bias: float) -> Dict[str, object]:
         round_number += 1
 
 
+def _previous_bump_distance(
+    previous: Optional[Dict[str, object]],
+    direction: str,
+) -> float:
+    try:
+        bump = previous["bump_crossing"]  # type: ignore[index]
+        direction_entry = bump[direction]  # type: ignore[index]
+        value = float(direction_entry["command_distance_m"])  # type: ignore[index]
+        if math.isfinite(value) and 0.0 < value <= motion.MAX_MOVE_DISTANCE_M:
+            return value
+    except (KeyError, TypeError, ValueError):
+        pass
+    return BUMP_DEFAULT_COMMAND_DISTANCE_M
+
+
+def _run_bump_trial(
+    scanner: str,
+    direction: str,
+    start: Tuple[float, float, float],
+    default_distance_m: float,
+    gz_bias: float,
+    cmd_a: float,
+    cmd_b: float,
+    round_number: int,
+) -> Tuple[float, bool, str]:
+    x, y, heading_deg = start
+    print("\n------------------------------------------------------------")
+    print(f"BUMP CROSSING — {direction}")
+    print(
+        f"Place the robot at ({x:.2f}, {y:.2f}) facing {heading_deg:.0f} degrees."
+    )
+    distance_m = _prompt_bump_distance(direction, default_distance_m)
+    input("Confirm placement and clear the path, then press Enter to start: ")
+    print("Starting in 3 seconds...")
+    time.sleep(3.0)
+    calibration = _calibration_bootstrap_snapshot(
+        scanner,
+        gz_bias,
+        cmd_a=cmd_a,
+        cmd_b=cmd_b,
+    )
+    ok, detail = motion._run_move(
+        forward=True,
+        distance_m=distance_m,
+        move_profile=(
+            "bump_crossing_up"
+            if direction == "positive_y"
+            else "bump_crossing_down"
+        ),
+        calibration=calibration,
+        calibration_gz_bias=gz_bias,
+    )
+    _append_row({
+        "recorded_at_utc": _utc_now(),
+        "scanner": scanner,
+        "phase": f"bump_crossing_{direction}",
+        "round": round_number,
+        "attempt": 1,
+        "accepted": False,
+        "desired_distance_m": distance_m,
+        "gz_bias": gz_bias,
+        "execution_ok": ok,
+        "execution_detail": detail,
+    })
+    print(f"Movement {'completed' if ok else 'failed'}: {detail}")
+    return distance_m, ok, detail
+
+
+def _prompt_bump_pair_decision(both_executed: bool) -> str:
+    while True:
+        if both_executed:
+            answer = input(
+                "Are both bump-crossing command distances satisfactory? [Y/n/q]: "
+            ).strip().lower()
+            if answer in {"", "y", "yes"}:
+                return "accept"
+        else:
+            answer = input(
+                "A movement failed. Repeat both trials or cancel? [R/q]: "
+            ).strip().lower()
+        if answer in {"n", "no", "r", "repeat"}:
+            return "repeat"
+        if answer in {"q", "quit", "cancel"}:
+            return "cancel"
+        print("Enter Y to accept both, N/R to repeat both, or Q to cancel.")
+
+
+def _run_bump_crossing_stage(
+    scanner: str,
+    previous: Optional[Dict[str, object]],
+    gz_bias: float,
+    cmd_a: float,
+    cmd_b: float,
+) -> Dict[str, object]:
+    positive_default = _previous_bump_distance(previous, "positive_y")
+    negative_default = _previous_bump_distance(previous, "negative_y")
+    round_number = 1
+    while True:
+        print("\n============================================================")
+        print(f"BUMP-CROSSING CALIBRATION — ROUND {round_number}")
+        print("============================================================")
+        positive, positive_ok, positive_detail = _run_bump_trial(
+            scanner, "positive_y", BUMP_POSITIVE_Y_START, positive_default,
+            gz_bias, cmd_a, cmd_b, round_number,
+        )
+        negative, negative_ok, negative_detail = _run_bump_trial(
+            scanner, "negative_y", BUMP_NEGATIVE_Y_START, negative_default,
+            gz_bias, cmd_a, cmd_b, round_number,
+        )
+        decision = _prompt_bump_pair_decision(positive_ok and negative_ok)
+        if decision == "cancel":
+            raise RuntimeError("bump-crossing calibration cancelled")
+        if decision == "accept":
+            return {
+                "accepted_round": round_number,
+                "positive_y_command_distance_m": positive,
+                "negative_y_command_distance_m": negative,
+                "positive_y_execution_detail": positive_detail,
+                "negative_y_execution_detail": negative_detail,
+                "quality": {"status": "pass", "manual_pair_accepted": True},
+            }
+        positive_default = positive
+        negative_default = negative
+        round_number += 1
+
+
 def _run_session(scanner: str) -> str:
     _archive_active_csv(scanner)
     registry = _load_registry()
@@ -952,6 +1113,13 @@ def _run_session(scanner: str) -> str:
     distance_stage = _run_distance_stage(scanner, gz_bias)
     fit = distance_stage["regression"]
     kick_distance_m = float(distance_stage["kick_distance_m"])
+    bump_stage = _run_bump_crossing_stage(
+        scanner,
+        previous,
+        gz_bias,
+        float(fit["cmd_a"]),
+        float(fit["cmd_b"]),
+    )
     comparison = _comparison(previous, gz_bias, fit)
     combined_quality = {
         "status": "pass" if (
@@ -960,17 +1128,27 @@ def _run_session(scanner: str) -> str:
         ) else "review",
         "gz_bias": gz_stage["quality"],
         "distance": distance_stage["quality"],
+        "bump_crossing": bump_stage["quality"],
     }
     result: Dict[str, object] = {
         "generated_at_utc": _utc_now(), "scanner": scanner,
         "gz_bias_calibration": gz_stage,
         "distance_calibration": distance_stage,
+        "bump_crossing_calibration": bump_stage,
         "combined_quality": combined_quality,
         "candidate": {
             "buck_voltage_v": buck_voltage_v,
             "gz_bias": gz_bias, "distance_model": fit,
             "short_move": {"kick_distance_m": kick_distance_m,
                            "skip_threshold_m": kick_distance_m / 2.0},
+            "bump_crossing": {
+                "positive_y": {
+                    "command_distance_m": bump_stage["positive_y_command_distance_m"]
+                },
+                "negative_y": {
+                    "command_distance_m": bump_stage["negative_y_command_distance_m"]
+                },
+            },
         },
         "comparison_with_previous": comparison,
         "session_csv": str(ACTIVE_CSV_PATH),
@@ -994,6 +1172,11 @@ def _run_session(scanner: str) -> str:
     print(f"Distance fit R-squared:    {fit['r_squared']:.6f}")
     print(f"Kick-only distance:        {kick_distance_m * 100:.2f} cm")
     print(f"Short-move skip below:     {kick_distance_m * 50:.2f} cm")
+    print(
+        "Bump +Y/-Y command:       "
+        f"{bump_stage['positive_y_command_distance_m']:.3f} / "
+        f"{bump_stage['negative_y_command_distance_m']:.3f} m"
+    )
     if comparison.get("available"):
         print("Previous comparison:       " + (
             "MAJOR DIFFERENCE" if comparison.get("major_difference") else "no major difference"))
@@ -1012,6 +1195,7 @@ def _run_session(scanner: str) -> str:
             fit,
             combined_quality,
             kick_distance_m,
+            bump_stage,
         )
         print(f"Registry updated:          {REGISTRY_PATH}")
         print("Production loader:         enabled for the next motion primitive")

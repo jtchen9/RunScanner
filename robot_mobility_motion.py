@@ -57,10 +57,12 @@ MOVE_BUMP_CROSSING_CRUISE_SPEED = 50
 MOVE_KICK_TIME_SEC = 0.35
 
 MOVE_PROFILE_DEFAULT = "default"
-MOVE_PROFILE_BUMP_CROSSING = "bump_crossing"
+MOVE_PROFILE_BUMP_CROSSING_UP = "bump_crossing_up"
+MOVE_PROFILE_BUMP_CROSSING_DOWN = "bump_crossing_down"
 SUPPORTED_MOVE_PROFILES = {
     MOVE_PROFILE_DEFAULT,
-    MOVE_PROFILE_BUMP_CROSSING,
+    MOVE_PROFILE_BUMP_CROSSING_UP,
+    MOVE_PROFILE_BUMP_CROSSING_DOWN,
 }
 
 # placeholder: 10 sec per meter at current cruise speed
@@ -158,7 +160,10 @@ def _normalize_move_profile(move_profile: str | None) -> Tuple[bool, str, str]:
 
 
 def _move_cruise_speed_for_profile(move_profile: str) -> int:
-    if move_profile == MOVE_PROFILE_BUMP_CROSSING:
+    if move_profile in {
+        MOVE_PROFILE_BUMP_CROSSING_UP,
+        MOVE_PROFILE_BUMP_CROSSING_DOWN,
+    }:
         return MOVE_BUMP_CROSSING_CRUISE_SPEED
     return MOVE_CRUISE_SPEED
 
