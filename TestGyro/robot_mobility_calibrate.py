@@ -521,15 +521,15 @@ def _prompt_skip_phase(phase_label: str, existing_summary: Optional[str]) -> boo
     if existing_summary is None:
         print("No complete existing calibration is available; this phase cannot be skipped.")
         return False
-    print(f"Existing calibration: {existing_summary}")
+    print(f"Value retained if skipped: {existing_summary}")
     while True:
         answer = input(
-            "Keep the existing calibration and skip this phase? [y/N]: "
+            "Keep this value and skip this phase? [y/N]: "
         ).strip().lower()
         if answer in {"", "n", "no"}:
             return False
         if answer in {"y", "yes"}:
-            print(f"Keeping existing {phase_label} calibration unchanged.")
+            print(f"Keeping the current {phase_label} value unchanged.")
             return True
         print("Enter Y to keep the existing value, or N to run this phase.")
 
@@ -986,8 +986,8 @@ def _run_startup_stage(
         "forward kick, then stops."
     )
     print("Judge the immediate heading change, not the distance travelled.")
-    print("If the robot twists left, increase LEFT or reduce RIGHT.")
-    print("If the robot twists right, increase RIGHT or reduce LEFT.")
+    print("If the robot twists left, increase RIGHT or reduce LEFT.")
+    print("If the robot twists right, increase LEFT or reduce RIGHT.")
 
     while True:
         print(f"\nStartup trial {attempt}")
@@ -1360,14 +1360,21 @@ def _run_session(scanner: str) -> str:
     print(f"Calibration buck voltage:  {buck_voltage_v:.3f} V")
 
     old_startup = _previous_startup_values(previous)
-    startup_summary = None
-    if old_startup is not None:
-        startup_summary = f"right={old_startup[0]}, left={old_startup[1]}"
+    if old_startup is None:
+        startup_values = (
+            DEFAULT_FORWARD_KICK_RIGHT_SPEED,
+            DEFAULT_FORWARD_KICK_LEFT_SPEED,
+        )
+        startup_summary = (
+            f"legacy/default right={startup_values[0]}, left={startup_values[1]}"
+        )
+    else:
+        startup_values = old_startup
+        startup_summary = f"saved right={old_startup[0]}, left={old_startup[1]}"
     skip_startup = _prompt_skip_phase("FORWARD STARTUP BALANCE", startup_summary)
     startup_stage: Optional[Dict[str, object]] = None
     if skip_startup:
-        assert old_startup is not None
-        startup_right_speed, startup_left_speed = old_startup
+        startup_right_speed, startup_left_speed = startup_values
     else:
         startup_stage = _run_startup_stage(scanner, previous)
         startup_right_speed = int(startup_stage["right_kick_speed"])
