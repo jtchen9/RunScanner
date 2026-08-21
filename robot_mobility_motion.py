@@ -182,6 +182,38 @@ def _move_cruise_speed_for_profile(move_profile: str) -> int:
     return MOVE_CRUISE_SPEED
 
 
+def _run_forward_startup_trial(
+    right_kick_speed: int,
+    left_kick_speed: int,
+) -> Tuple[bool, str]:
+    """Run only the open-loop forward kick used for startup calibration."""
+    if not (0 <= right_kick_speed <= 100 and 0 <= left_kick_speed <= 100):
+        return False, (
+            "BAD_COMMAND_ARGS startup kick speeds must be between 0 and 100"
+        )
+
+    ok, m, detail = _motor_begin()
+    if not ok:
+        return False, detail
+
+    try:
+        _safe_stop(m)
+        _sleep_checked(0.2)
+        m.motor_movement([m.M1], m.CCW, int(right_kick_speed))
+        m.motor_movement([m.M2], m.CW, int(left_kick_speed))
+        _sleep_checked(MOVE_KICK_TIME_SEC)
+        return True, (
+            "forward_startup_trial_done "
+            f"right_kick_speed={right_kick_speed} "
+            f"left_kick_speed={left_kick_speed} "
+            f"kick_time={MOVE_KICK_TIME_SEC:.3f}"
+        )
+    except Exception as exc:
+        return False, f"MOVE_STARTUP_CALIBRATION_FAIL {exc}"
+    finally:
+        _safe_stop(m)
+
+
 def _run_move(
     forward: bool,
     distance_m: float,
@@ -211,6 +243,14 @@ def _run_move(
             cmd_a=calibration.cmd_a,
             cmd_b=calibration.cmd_b,
             source="calibration_override",
+            kick_distance_m=calibration.kick_distance_m,
+            skip_threshold_m=calibration.skip_threshold_m,
+            calibrated_at_utc=calibration.calibrated_at_utc,
+            warning=calibration.warning,
+            bump_positive_y_distance_m=calibration.bump_positive_y_distance_m,
+            bump_negative_y_distance_m=calibration.bump_negative_y_distance_m,
+            forward_kick_right_speed=calibration.forward_kick_right_speed,
+            forward_kick_left_speed=calibration.forward_kick_left_speed,
         )
 
     ok, m, detail = _motor_begin()
@@ -236,12 +276,16 @@ def _run_move(
             _safe_stop(m)
             return False, f"IMU_HEADING_HOLD_FAIL {detail_i}"
 
-        def apply_forward_heading_hold(base_speed: int, dt: float):
+        def apply_forward_heading_hold(
+            right_base_speed: int,
+            left_base_speed: int,
+            dt: float,
+        ):
             nonlocal yaw_deg, max_abs_yaw_deg
 
             if not (forward and HEADING_HOLD_ENABLED and ok_i):
-                m.motor_movement([m.M1], m.CCW, base_speed)
-                m.motor_movement([m.M2], m.CW,  base_speed)
+                m.motor_movement([m.M1], m.CCW, right_base_speed)
+                m.motor_movement([m.M2], m.CW,  left_base_speed)
                 return
 
             yaw_rate = _read_yaw_rate(imu, calibration.gz_bias)
@@ -260,8 +304,8 @@ def _run_move(
 
             # Positive yaw = robot turned right.
             # Correct by turning left: right wheel faster, left wheel slower.
-            right_speed = _clamp_speed(base_speed + corr)
-            left_speed  = _clamp_speed(base_speed - corr)
+            right_speed = _clamp_speed(right_base_speed + corr)
+            left_speed  = _clamp_speed(left_base_speed - corr)
 
             m.motor_movement([m.M1], m.CCW, right_speed)
             m.motor_movement([m.M2], m.CW,  left_speed)
@@ -279,7 +323,11 @@ def _run_move(
                 dt = t_now - t_prev
                 t_prev = t_now
 
-                apply_forward_heading_hold(MOVE_KICK_SPEED, dt)
+                apply_forward_heading_hold(
+                    calibration.forward_kick_right_speed,
+                    calibration.forward_kick_left_speed,
+                    dt,
+                )
 
                 time.sleep(step)
                 elapsed += step
@@ -302,7 +350,7 @@ def _run_move(
                 dt = t_now - t_prev
                 t_prev = t_now
 
-                apply_forward_heading_hold(cruise_speed, dt)
+                apply_forward_heading_hold(cruise_speed, cruise_speed, dt)
 
                 time.sleep(step)
                 elapsed += step
@@ -318,6 +366,8 @@ def _run_move(
             f"distance_m={distance_m:.3f} "
             f"motor_distance_m={motor_distance_m:.3f} "
             f"kick_time={MOVE_KICK_TIME_SEC:.3f} "
+            f"forward_kick_right_speed={calibration.forward_kick_right_speed} "
+            f"forward_kick_left_speed={calibration.forward_kick_left_speed} "
             f"cruise_time={cruise_time:.3f} "
             f"move_profile={profile} "
             f"cruise_speed={cruise_speed} "

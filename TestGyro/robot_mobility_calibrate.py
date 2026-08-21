@@ -62,6 +62,14 @@ DEFAULT_BUCK_VOLTAGE_V = 8.2
 BUMP_POSITIVE_Y_START = (9.06, 4.30, 90.0)
 BUMP_NEGATIVE_Y_START = (9.06, 6.10, 270.0)
 BUMP_DEFAULT_COMMAND_DISTANCE_M = 2.0
+DEFAULT_FORWARD_KICK_RIGHT_SPEED = 40
+DEFAULT_FORWARD_KICK_LEFT_SPEED = 40
+
+# These session values are installed into every calibration-only snapshot after
+# the startup phase is accepted or skipped. Production snapshots come from the
+# registry loader instead.
+SESSION_FORWARD_KICK_RIGHT_SPEED = DEFAULT_FORWARD_KICK_RIGHT_SPEED
+SESSION_FORWARD_KICK_LEFT_SPEED = DEFAULT_FORWARD_KICK_LEFT_SPEED
 
 CALIBRATION_DIR = SCRIPT_DIR / "calibration"
 ACTIVE_CSV_PATH = CALIBRATION_DIR / "current_calibration.csv"
@@ -85,6 +93,8 @@ CSV_FIELDS = (
     "gz_bias",
     "execution_ok",
     "execution_detail",
+    "right_kick_speed",
+    "left_kick_speed",
 )
 
 
@@ -194,6 +204,21 @@ def _prompt_bump_distance(direction_label: str, default_value: float) -> float:
         return value
 
 
+def _prompt_motor_speed(prompt: str, default_value: int) -> int:
+    while True:
+        answer = input(f"{prompt} [{default_value}]: ").strip()
+        if not answer:
+            return default_value
+        try:
+            value = int(answer)
+        except ValueError:
+            print("Enter an integer motor speed from 0 through 100.")
+            continue
+        if 0 <= value <= 100:
+            return value
+        print("Enter an integer motor speed from 0 through 100.")
+
+
 def _prompt_retry(next_experiment: str) -> bool:
     print(f"Next experiment: {next_experiment}")
     while True:
@@ -269,6 +294,8 @@ def _calibration_bootstrap_snapshot(
         cmd_b=effective_cmd_b,
         source="calibration_bootstrap",
         warning="calibration_bootstrap_not_for_production",
+        forward_kick_right_speed=SESSION_FORWARD_KICK_RIGHT_SPEED,
+        forward_kick_left_speed=SESSION_FORWARD_KICK_LEFT_SPEED,
     )
 
 
@@ -424,6 +451,28 @@ def _previous_gz_bias(previous: Optional[Dict[str, object]]) -> Optional[float]:
     if not isinstance(previous, dict):
         return None
     return _finite_number(previous.get("gz_bias"))
+
+
+def _previous_startup_values(
+    previous: Optional[Dict[str, object]],
+) -> Optional[Tuple[int, int]]:
+    if not isinstance(previous, dict):
+        return None
+    move_startup = previous.get("move_startup")
+    if not isinstance(move_startup, dict):
+        return None
+    forward = move_startup.get("forward")
+    if not isinstance(forward, dict):
+        return None
+    right = _finite_number(forward.get("right_kick_speed"))
+    left = _finite_number(forward.get("left_kick_speed"))
+    if right is None or left is None or not right.is_integer() or not left.is_integer():
+        return None
+    right_int = int(right)
+    left_int = int(left)
+    if not (0 <= right_int <= 100 and 0 <= left_int <= 100):
+        return None
+    return right_int, left_int
 
 
 def _previous_distance_values(
@@ -900,9 +949,101 @@ def _prompt_final_action(has_previous: bool) -> str:
         print("Enter U to update, K to keep the previous entry, or R to repeat.")
 
 
+def _prompt_startup_trial_decision() -> str:
+    while True:
+        answer = input(
+            "Is the startup direction satisfactory? [y/N/q]: "
+        ).strip().lower()
+        if answer in {"y", "yes"}:
+            return "accept"
+        if answer in {"", "n", "no", "r", "retry"}:
+            return "retry"
+        if answer in {"q", "quit", "cancel"}:
+            return "cancel"
+        print("Enter Y to accept, N to adjust and retry, or Q to cancel.")
+
+
+def _run_startup_stage(
+    scanner: str,
+    previous: Optional[Dict[str, object]],
+) -> Dict[str, object]:
+    old_values = _previous_startup_values(previous)
+    right_speed = (
+        old_values[0] if old_values is not None
+        else DEFAULT_FORWARD_KICK_RIGHT_SPEED
+    )
+    left_speed = (
+        old_values[1] if old_values is not None
+        else DEFAULT_FORWARD_KICK_LEFT_SPEED
+    )
+    attempt = 1
+
+    print("\n============================================================")
+    print("FORWARD STARTUP BALANCE CALIBRATION")
+    print("============================================================")
+    print(
+        f"Each trial runs only the {motion.MOVE_KICK_TIME_SEC:.2f}-second "
+        "forward kick, then stops."
+    )
+    print("Judge the immediate heading change, not the distance travelled.")
+    print("If the robot twists left, increase LEFT or reduce RIGHT.")
+    print("If the robot twists right, increase RIGHT or reduce LEFT.")
+
+    while True:
+        print(f"\nStartup trial {attempt}")
+        right_speed = _prompt_motor_speed("Right-side kick speed", right_speed)
+        left_speed = _prompt_motor_speed("Left-side kick speed", left_speed)
+        input(
+            "Place the robot on the marked heading and clear the short path, "
+            "then press Enter: "
+        )
+        print("Starting in 3 seconds...")
+        time.sleep(3.0)
+        ok, detail = motion._run_forward_startup_trial(right_speed, left_speed)
+        row = {
+            "recorded_at_utc": _utc_now(),
+            "scanner": scanner,
+            "phase": "forward_startup_balance",
+            "round": 1,
+            "attempt": attempt,
+            "accepted": False,
+            "execution_ok": ok,
+            "execution_detail": detail,
+            "right_kick_speed": right_speed,
+            "left_kick_speed": left_speed,
+        }
+        print(f"Startup trial {'completed' if ok else 'failed'}: {detail}")
+        if not ok:
+            _append_row(row)
+            answer = input("Retry this startup trial? [Y/n]: ").strip().lower()
+            if answer in {"", "y", "yes"}:
+                attempt += 1
+                continue
+            raise RuntimeError("startup calibration stopped after failed movement")
+
+        decision = _prompt_startup_trial_decision()
+        row["accepted"] = decision == "accept"
+        _append_row(row)
+        if decision == "cancel":
+            raise RuntimeError("startup calibration cancelled before acceptance")
+        if decision == "accept":
+            return {
+                "accepted_trial": attempt,
+                "right_kick_speed": right_speed,
+                "left_kick_speed": left_speed,
+                "kick_time_sec": motion.MOVE_KICK_TIME_SEC,
+                "quality": {
+                    "status": "pass",
+                    "manual_startup_heading_accepted": True,
+                },
+            }
+        attempt += 1
+
+
 def _write_registry(
     scanner: str,
     buck_voltage_v: float,
+    startup_stage: Optional[Dict[str, object]],
     gz_stage: Optional[Dict[str, object]],
     distance_stage: Optional[Dict[str, object]],
     bump_stage: Optional[Dict[str, object]],
@@ -926,6 +1067,15 @@ def _write_registry(
     quality: Dict[str, object] = (
         copy.deepcopy(old_quality) if isinstance(old_quality, dict) else {}
     )
+
+    if startup_stage is not None:
+        entry["move_startup"] = {
+            "forward": {
+                "right_kick_speed": int(startup_stage["right_kick_speed"]),
+                "left_kick_speed": int(startup_stage["left_kick_speed"]),
+            },
+        }
+        quality["move_startup"] = copy.deepcopy(startup_stage["quality"])
 
     if gz_stage is not None:
         entry["gz_bias"] = float(gz_stage["gz_bias"])
@@ -962,7 +1112,7 @@ def _write_registry(
 
     phase_statuses = [
         value.get("status") for key, value in quality.items()
-        if key in {"gz_bias", "distance", "bump_crossing"}
+        if key in {"move_startup", "gz_bias", "distance", "bump_crossing"}
         and isinstance(value, dict)
     ]
     if phase_statuses:
@@ -1188,6 +1338,9 @@ def _run_bump_crossing_stage(
 
 
 def _run_session(scanner: str) -> str:
+    global SESSION_FORWARD_KICK_RIGHT_SPEED
+    global SESSION_FORWARD_KICK_LEFT_SPEED
+
     _archive_active_csv(scanner)
     registry = _load_registry()
     previous = _previous_entry(registry, scanner)
@@ -1205,6 +1358,22 @@ def _run_session(scanner: str) -> str:
 
     buck_voltage_v = _prompt_buck_voltage(previous)
     print(f"Calibration buck voltage:  {buck_voltage_v:.3f} V")
+
+    old_startup = _previous_startup_values(previous)
+    startup_summary = None
+    if old_startup is not None:
+        startup_summary = f"right={old_startup[0]}, left={old_startup[1]}"
+    skip_startup = _prompt_skip_phase("FORWARD STARTUP BALANCE", startup_summary)
+    startup_stage: Optional[Dict[str, object]] = None
+    if skip_startup:
+        assert old_startup is not None
+        startup_right_speed, startup_left_speed = old_startup
+    else:
+        startup_stage = _run_startup_stage(scanner, previous)
+        startup_right_speed = int(startup_stage["right_kick_speed"])
+        startup_left_speed = int(startup_stage["left_kick_speed"])
+    SESSION_FORWARD_KICK_RIGHT_SPEED = startup_right_speed
+    SESSION_FORWARD_KICK_LEFT_SPEED = startup_left_speed
 
     old_gz_bias = _previous_gz_bias(previous)
     skip_gz = _prompt_skip_phase(
@@ -1269,13 +1438,15 @@ def _run_session(scanner: str) -> str:
         }
     comparison = _comparison(previous, gz_bias, fit)
     phase_actions = {
+        "move_startup": "skipped" if skip_startup else "calibrated",
         "gz_bias": "skipped" if skip_gz else "calibrated",
         "distance": "skipped" if skip_distance else "calibrated",
         "bump_crossing": "skipped" if skip_bump else "calibrated",
     }
     combined_quality: Dict[str, object] = {"phase_actions": phase_actions}
     new_statuses: List[str] = []
-    for name, stage in (("gz_bias", gz_stage), ("distance", distance_stage),
+    for name, stage in (("move_startup", startup_stage),
+                        ("gz_bias", gz_stage), ("distance", distance_stage),
                         ("bump_crossing", bump_stage)):
         if stage is not None:
             stage_quality = stage["quality"]
@@ -1289,12 +1460,19 @@ def _run_session(scanner: str) -> str:
     result: Dict[str, object] = {
         "generated_at_utc": _utc_now(), "scanner": scanner,
         "phase_actions": phase_actions,
+        "move_startup_calibration": startup_stage or {"status": "skipped"},
         "gz_bias_calibration": gz_stage or {"status": "skipped"},
         "distance_calibration": distance_stage or {"status": "skipped"},
         "bump_crossing_calibration": bump_stage or {"status": "skipped"},
         "combined_quality": combined_quality,
         "candidate": {
             "buck_voltage_v": buck_voltage_v,
+            "move_startup": {
+                "forward": {
+                    "right_kick_speed": startup_right_speed,
+                    "left_kick_speed": startup_left_speed,
+                },
+            },
             "gz_bias": gz_bias, "distance_model": fit,
             "short_move": {"kick_distance_m": kick_distance_m,
                            "skip_threshold_m": kick_distance_m / 2.0},
@@ -1317,6 +1495,10 @@ def _run_session(scanner: str) -> str:
     print("============================================================")
     print(f"Combined quality:          {str(combined_quality['status']).upper()}")
     print(f"Buck voltage:              {buck_voltage_v:.3f} V")
+    print(
+        "Forward kick right/left:   "
+        f"{startup_right_speed} / {startup_left_speed}"
+    )
     print(f"Accepted GZ_BIAS:          {gz_bias:+.9f}")
     print(f"Phase actions:             {phase_actions}")
     if gz_stage is not None:
@@ -1355,6 +1537,7 @@ def _run_session(scanner: str) -> str:
         _write_registry(
             scanner,
             buck_voltage_v,
+            startup_stage,
             gz_stage,
             distance_stage,
             bump_stage,

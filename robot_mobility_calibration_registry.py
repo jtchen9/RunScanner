@@ -30,6 +30,8 @@ class MobilityCalibrationSnapshot:
     warning: str = ""
     bump_positive_y_distance_m: Optional[float] = None
     bump_negative_y_distance_m: Optional[float] = None
+    forward_kick_right_speed: int = 40
+    forward_kick_left_speed: int = 40
 
     def motor_distance(self, desired_distance_m: float) -> float:
         value = self.cmd_a * float(desired_distance_m) + self.cmd_b
@@ -43,7 +45,9 @@ class MobilityCalibrationSnapshot:
             f"calibration_cmd_a={self.cmd_a:.12f} "
             f"calibration_cmd_b={self.cmd_b:.12f} "
             f"calibration_kick_distance_m={self.kick_distance_m:.3f} "
-            f"calibration_skip_threshold_m={self.skip_threshold_m:.3f}"
+            f"calibration_skip_threshold_m={self.skip_threshold_m:.3f} "
+            f"calibration_forward_kick_right_speed={self.forward_kick_right_speed} "
+            f"calibration_forward_kick_left_speed={self.forward_kick_left_speed}"
         )
         if self.warning:
             compact_warning = "_".join(self.warning.split())
@@ -156,6 +160,32 @@ def load_mobility_calibration(
             if bump_positive_y_distance_m <= 0.0 or bump_negative_y_distance_m <= 0.0:
                 raise ValueError("bump-crossing command distances must be positive")
 
+        move_startup = entry.get("move_startup")
+        forward_kick_right_speed = 40
+        forward_kick_left_speed = 40
+        if move_startup is not None:
+            if not isinstance(move_startup, dict):
+                raise ValueError("move_startup must be an object")
+            forward_startup = move_startup.get("forward")
+            if not isinstance(forward_startup, dict):
+                raise ValueError("move_startup.forward must be an object")
+            right_value = _finite_number(
+                forward_startup.get("right_kick_speed"),
+                "move_startup.forward.right_kick_speed",
+            )
+            left_value = _finite_number(
+                forward_startup.get("left_kick_speed"),
+                "move_startup.forward.left_kick_speed",
+            )
+            if not right_value.is_integer() or not left_value.is_integer():
+                raise ValueError("forward kick speeds must be integers")
+            forward_kick_right_speed = int(right_value)
+            forward_kick_left_speed = int(left_value)
+            if not (0 <= forward_kick_right_speed <= 100):
+                raise ValueError("right_kick_speed must be between 0 and 100")
+            if not (0 <= forward_kick_left_speed <= 100):
+                raise ValueError("left_kick_speed must be between 0 and 100")
+
         return MobilityCalibrationSnapshot(
             scanner=scanner,
             gz_bias=gz_bias,
@@ -167,6 +197,8 @@ def load_mobility_calibration(
             calibrated_at_utc=str(entry.get("calibrated_at_utc") or ""),
             bump_positive_y_distance_m=bump_positive_y_distance_m,
             bump_negative_y_distance_m=bump_negative_y_distance_m,
+            forward_kick_right_speed=forward_kick_right_speed,
+            forward_kick_left_speed=forward_kick_left_speed,
         )
     except MobilityCalibrationError:
         raise
