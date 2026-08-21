@@ -15,6 +15,7 @@ diagnostic function so it can be tested again without reconstructing it.
 from __future__ import annotations
 
 import csv
+import copy
 import json
 import math
 import re
@@ -409,6 +410,79 @@ def _previous_entry(registry: Dict[str, object], scanner: str) -> Optional[Dict[
         return None
     entry = robots.get(scanner)
     return entry if isinstance(entry, dict) else None
+
+
+def _finite_number(value: object) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _previous_gz_bias(previous: Optional[Dict[str, object]]) -> Optional[float]:
+    if not isinstance(previous, dict):
+        return None
+    return _finite_number(previous.get("gz_bias"))
+
+
+def _previous_distance_values(
+    previous: Optional[Dict[str, object]],
+) -> Optional[Tuple[Dict[str, float], float]]:
+    if not isinstance(previous, dict):
+        return None
+    model = previous.get("distance_model")
+    short_move = previous.get("short_move")
+    if not isinstance(model, dict) or not isinstance(short_move, dict):
+        return None
+    values = {name: _finite_number(model.get(name)) for name in
+              ("actual_a", "actual_b", "cmd_a", "cmd_b")}
+    kick_distance_m = _finite_number(short_move.get("kick_distance_m"))
+    if any(value is None for value in values.values()) or kick_distance_m is None:
+        return None
+    if values["actual_a"] <= 0.0 or values["cmd_a"] <= 0.0 or kick_distance_m < 0.0:
+        return None
+    return ({name: float(value) for name, value in values.items()}, kick_distance_m)
+
+
+def _previous_bump_values(
+    previous: Optional[Dict[str, object]],
+) -> Optional[Dict[str, float]]:
+    if not isinstance(previous, dict):
+        return None
+    bump = previous.get("bump_crossing")
+    if not isinstance(bump, dict):
+        return None
+    result: Dict[str, float] = {}
+    for direction in ("positive_y", "negative_y"):
+        direction_entry = bump.get(direction)
+        if not isinstance(direction_entry, dict):
+            return None
+        value = _finite_number(direction_entry.get("command_distance_m"))
+        if value is None or not (0.0 < value <= motion.MAX_MOVE_DISTANCE_M):
+            return None
+        result[direction] = value
+    return result
+
+
+def _prompt_skip_phase(phase_label: str, existing_summary: Optional[str]) -> bool:
+    print("\n============================================================")
+    print(f"{phase_label} — PHASE SELECTION")
+    print("============================================================")
+    if existing_summary is None:
+        print("No complete existing calibration is available; this phase cannot be skipped.")
+        return False
+    print(f"Existing calibration: {existing_summary}")
+    while True:
+        answer = input(
+            "Keep the existing calibration and skip this phase? [y/N]: "
+        ).strip().lower()
+        if answer in {"", "n", "no"}:
+            return False
+        if answer in {"y", "yes"}:
+            print(f"Keeping existing {phase_label} calibration unchanged.")
+            return True
+        print("Enter Y to keep the existing value, or N to run this phase.")
 
 
 _DETAIL_NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
@@ -829,11 +903,9 @@ def _prompt_final_action(has_previous: bool) -> str:
 def _write_registry(
     scanner: str,
     buck_voltage_v: float,
-    gz_bias: float,
-    fit: Dict[str, float],
-    quality: Dict[str, object],
-    kick_distance_m: float,
-    bump_stage: Dict[str, object],
+    gz_stage: Optional[Dict[str, object]],
+    distance_stage: Optional[Dict[str, object]],
+    bump_stage: Optional[Dict[str, object]],
 ) -> None:
     registry = _load_registry()
     robots = registry["robots"]
@@ -845,20 +917,38 @@ def _write_registry(
         )
         shutil.copy2(REGISTRY_PATH, backup)
 
-    robots[scanner] = {
-        "buck_voltage_v": buck_voltage_v,
-        "gz_bias": gz_bias,
-        "distance_model": {
+    old_entry = robots.get(scanner)
+    entry: Dict[str, object] = (
+        copy.deepcopy(old_entry) if isinstance(old_entry, dict) else {}
+    )
+    entry["buck_voltage_v"] = buck_voltage_v
+    old_quality = entry.get("quality")
+    quality: Dict[str, object] = (
+        copy.deepcopy(old_quality) if isinstance(old_quality, dict) else {}
+    )
+
+    if gz_stage is not None:
+        entry["gz_bias"] = float(gz_stage["gz_bias"])
+        quality["gz_bias"] = copy.deepcopy(gz_stage["quality"])
+
+    if distance_stage is not None:
+        fit = distance_stage["regression"]
+        assert isinstance(fit, dict)
+        kick_distance_m = float(distance_stage["kick_distance_m"])
+        entry["distance_model"] = {
             "actual_a": fit["actual_a"],
             "actual_b": fit["actual_b"],
             "cmd_a": fit["cmd_a"],
             "cmd_b": fit["cmd_b"],
-        },
-        "short_move": {
+        }
+        entry["short_move"] = {
             "kick_distance_m": kick_distance_m,
             "skip_threshold_m": kick_distance_m / 2.0,
-        },
-        "bump_crossing": {
+        }
+        quality["distance"] = copy.deepcopy(distance_stage["quality"])
+
+    if bump_stage is not None:
+        entry["bump_crossing"] = {
             "positive_y": {
                 "command_distance_m": bump_stage["positive_y_command_distance_m"],
                 "start": {"x": 9.06, "y": 4.30, "heading_deg": 90.0},
@@ -867,12 +957,23 @@ def _write_registry(
                 "command_distance_m": bump_stage["negative_y_command_distance_m"],
                 "start": {"x": 9.06, "y": 6.10, "heading_deg": 270.0},
             },
-        },
-        "calibrated_at_utc": _utc_now(),
-        "source": str(ACTIVE_CSV_PATH),
-        "quality": quality,
-        "production_loader_enabled": True,
-    }
+        }
+        quality["bump_crossing"] = copy.deepcopy(bump_stage["quality"])
+
+    phase_statuses = [
+        value.get("status") for key, value in quality.items()
+        if key in {"gz_bias", "distance", "bump_crossing"}
+        and isinstance(value, dict)
+    ]
+    if phase_statuses:
+        quality["status"] = (
+            "pass" if all(status == "pass" for status in phase_statuses) else "review"
+        )
+    entry["quality"] = quality
+    entry["calibrated_at_utc"] = _utc_now()
+    entry["source"] = str(ACTIVE_CSV_PATH)
+    entry["production_loader_enabled"] = True
+    robots[scanner] = entry
 
     temporary = REGISTRY_PATH.with_suffix(".json.tmp")
     temporary.write_text(
@@ -1105,36 +1206,92 @@ def _run_session(scanner: str) -> str:
     buck_voltage_v = _prompt_buck_voltage(previous)
     print(f"Calibration buck voltage:  {buck_voltage_v:.3f} V")
 
-    gz_stage = _run_gz_bias_stage(scanner, previous)
-    gz_bias = float(gz_stage["gz_bias"])
-    print("\nNext stage overview:")
-    print("Distance trial order: " + " -> ".join(f"{value:.2f} m" for value in RAW_SEQUENCE_M))
-    print(f"Then one {VERIFY_DISTANCE_M:.2f} m verification movement.")
-    distance_stage = _run_distance_stage(scanner, gz_bias)
-    fit = distance_stage["regression"]
-    kick_distance_m = float(distance_stage["kick_distance_m"])
-    bump_stage = _run_bump_crossing_stage(
-        scanner,
-        previous,
-        gz_bias,
-        float(fit["cmd_a"]),
-        float(fit["cmd_b"]),
+    old_gz_bias = _previous_gz_bias(previous)
+    skip_gz = _prompt_skip_phase(
+        "GZ_BIAS",
+        None if old_gz_bias is None else f"GZ_BIAS={old_gz_bias:+.9f}",
     )
+    gz_stage: Optional[Dict[str, object]] = None
+    if skip_gz:
+        assert old_gz_bias is not None
+        gz_bias = old_gz_bias
+    else:
+        gz_stage = _run_gz_bias_stage(scanner, previous)
+        gz_bias = float(gz_stage["gz_bias"])
+
+    old_distance = _previous_distance_values(previous)
+    distance_summary = None
+    if old_distance is not None:
+        old_fit, old_kick = old_distance
+        distance_summary = (
+            f"cmd_a={old_fit['cmd_a']:.12f}, cmd_b={old_fit['cmd_b']:.12f}, "
+            f"kick={old_kick:.3f} m"
+        )
+    skip_distance = _prompt_skip_phase("DISTANCE", distance_summary)
+    distance_stage: Optional[Dict[str, object]] = None
+    if skip_distance:
+        assert old_distance is not None
+        fit, kick_distance_m = old_distance
+    else:
+        print("\nNext stage overview:")
+        print("Distance trial order: " + " -> ".join(
+            f"{value:.2f} m" for value in RAW_SEQUENCE_M
+        ))
+        print(f"Then one {VERIFY_DISTANCE_M:.2f} m verification movement.")
+        distance_stage = _run_distance_stage(scanner, gz_bias)
+        fit = distance_stage["regression"]
+        assert isinstance(fit, dict)
+        kick_distance_m = float(distance_stage["kick_distance_m"])
+
+    old_bump = _previous_bump_values(previous)
+    bump_summary = None
+    if old_bump is not None:
+        bump_summary = (
+            f"+Y={old_bump['positive_y']:.3f} m, "
+            f"-Y={old_bump['negative_y']:.3f} m"
+        )
+    skip_bump = _prompt_skip_phase("BUMP CROSSING", bump_summary)
+    bump_stage: Optional[Dict[str, object]] = None
+    if skip_bump:
+        assert old_bump is not None
+        bump_values = old_bump
+    else:
+        bump_stage = _run_bump_crossing_stage(
+            scanner,
+            previous,
+            gz_bias,
+            float(fit["cmd_a"]),
+            float(fit["cmd_b"]),
+        )
+        bump_values = {
+            "positive_y": float(bump_stage["positive_y_command_distance_m"]),
+            "negative_y": float(bump_stage["negative_y_command_distance_m"]),
+        }
     comparison = _comparison(previous, gz_bias, fit)
-    combined_quality = {
-        "status": "pass" if (
-            gz_stage["quality"]["status"] == "pass"
-            and distance_stage["quality"]["status"] == "pass"
-        ) else "review",
-        "gz_bias": gz_stage["quality"],
-        "distance": distance_stage["quality"],
-        "bump_crossing": bump_stage["quality"],
+    phase_actions = {
+        "gz_bias": "skipped" if skip_gz else "calibrated",
+        "distance": "skipped" if skip_distance else "calibrated",
+        "bump_crossing": "skipped" if skip_bump else "calibrated",
     }
+    combined_quality: Dict[str, object] = {"phase_actions": phase_actions}
+    new_statuses: List[str] = []
+    for name, stage in (("gz_bias", gz_stage), ("distance", distance_stage),
+                        ("bump_crossing", bump_stage)):
+        if stage is not None:
+            stage_quality = stage["quality"]
+            combined_quality[name] = stage_quality
+            if isinstance(stage_quality, dict):
+                new_statuses.append(str(stage_quality.get("status")))
+    combined_quality["status"] = (
+        "pass" if new_statuses and all(value == "pass" for value in new_statuses)
+        else "unchanged" if not new_statuses else "review"
+    )
     result: Dict[str, object] = {
         "generated_at_utc": _utc_now(), "scanner": scanner,
-        "gz_bias_calibration": gz_stage,
-        "distance_calibration": distance_stage,
-        "bump_crossing_calibration": bump_stage,
+        "phase_actions": phase_actions,
+        "gz_bias_calibration": gz_stage or {"status": "skipped"},
+        "distance_calibration": distance_stage or {"status": "skipped"},
+        "bump_crossing_calibration": bump_stage or {"status": "skipped"},
         "combined_quality": combined_quality,
         "candidate": {
             "buck_voltage_v": buck_voltage_v,
@@ -1143,10 +1300,10 @@ def _run_session(scanner: str) -> str:
                            "skip_threshold_m": kick_distance_m / 2.0},
             "bump_crossing": {
                 "positive_y": {
-                    "command_distance_m": bump_stage["positive_y_command_distance_m"]
+                    "command_distance_m": bump_values["positive_y"]
                 },
                 "negative_y": {
-                    "command_distance_m": bump_stage["negative_y_command_distance_m"]
+                    "command_distance_m": bump_values["negative_y"]
                 },
             },
         },
@@ -1161,21 +1318,28 @@ def _run_session(scanner: str) -> str:
     print(f"Combined quality:          {str(combined_quality['status']).upper()}")
     print(f"Buck voltage:              {buck_voltage_v:.3f} V")
     print(f"Accepted GZ_BIAS:          {gz_bias:+.9f}")
-    print("GZ calibration method:     static seed + accepted 3 m physical walk")
-    print(
-        "GZ raw sample spread:      "
-        f"{gz_stage['static_measurement']['raw_sample_spread_deg_per_sec']:.9f} deg/s"
-    )
-    print(f"Accepted GZ walking trial: {gz_stage['accepted_trial']}")
+    print(f"Phase actions:             {phase_actions}")
+    if gz_stage is not None:
+        print("GZ calibration method:     static seed + accepted 3 m physical walk")
+        print(
+            "GZ raw sample spread:      "
+            f"{gz_stage['static_measurement']['raw_sample_spread_deg_per_sec']:.9f} deg/s"
+        )
+        print(f"Accepted GZ walking trial: {gz_stage['accepted_trial']}")
+    else:
+        print("GZ calibration method:     existing registry value retained")
     print(f"Distance cmd_a/b:          {fit['cmd_a']:.12f}, {fit['cmd_b']:.12f}")
-    print(f"Distance fit RMSE:         {fit['rmse_m'] * 100:.2f} cm")
-    print(f"Distance fit R-squared:    {fit['r_squared']:.6f}")
+    if distance_stage is not None:
+        print(f"Distance fit RMSE:         {fit['rmse_m'] * 100:.2f} cm")
+        print(f"Distance fit R-squared:    {fit['r_squared']:.6f}")
+    else:
+        print("Distance calibration:      existing registry values retained")
     print(f"Kick-only distance:        {kick_distance_m * 100:.2f} cm")
     print(f"Short-move skip below:     {kick_distance_m * 50:.2f} cm")
     print(
         "Bump +Y/-Y command:       "
-        f"{bump_stage['positive_y_command_distance_m']:.3f} / "
-        f"{bump_stage['negative_y_command_distance_m']:.3f} m"
+        f"{bump_values['positive_y']:.3f} / "
+        f"{bump_values['negative_y']:.3f} m"
     )
     if comparison.get("available"):
         print("Previous comparison:       " + (
@@ -1191,10 +1355,8 @@ def _run_session(scanner: str) -> str:
         _write_registry(
             scanner,
             buck_voltage_v,
-            gz_bias,
-            fit,
-            combined_quality,
-            kick_distance_m,
+            gz_stage,
+            distance_stage,
             bump_stage,
         )
         print(f"Registry updated:          {REGISTRY_PATH}")
