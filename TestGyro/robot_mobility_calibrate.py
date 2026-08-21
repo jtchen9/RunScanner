@@ -61,7 +61,8 @@ PREFERRED_GZ_ZERO_MAX = 3.0
 DEFAULT_BUCK_VOLTAGE_V = 8.2
 BUMP_POSITIVE_Y_START = (9.06, 4.30, 90.0)
 BUMP_NEGATIVE_Y_START = (9.06, 6.10, 270.0)
-BUMP_DEFAULT_COMMAND_DISTANCE_M = 2.0
+BUMP_DEFAULT_COMMAND_DISTANCE_M = 0.70
+BUMP_GZ_TUNING_COMMAND_DISTANCE_M = 0.70
 DEFAULT_FORWARD_KICK_RIGHT_SPEED = 40
 DEFAULT_FORWARD_KICK_LEFT_SPEED = 40
 
@@ -186,22 +187,45 @@ def _prompt_buck_voltage(previous: Optional[Dict[str, object]]) -> float:
 def _prompt_bump_distance(direction_label: str, default_value: float) -> float:
     while True:
         answer = input(
-            f"Command distance for {direction_label} [{default_value:.3f} m]: "
+            f"Command distance for {direction_label} [{default_value * 100:.1f} cm]: "
         ).strip()
         if not answer:
             return default_value
         try:
-            value = float(answer)
+            value_cm = float(answer)
         except ValueError:
-            print("Enter a finite positive distance in metres.")
+            print("Enter a finite positive distance in centimetres.")
             continue
-        if not math.isfinite(value) or not (0.0 < value <= motion.MAX_MOVE_DISTANCE_M):
+        value_m = value_cm / 100.0
+        if not math.isfinite(value_cm) or not (
+            0.0 < value_m <= motion.MAX_MOVE_DISTANCE_M
+        ):
             print(
                 "Enter a distance greater than zero and no more than "
-                f"{motion.MAX_MOVE_DISTANCE_M:.3f} m."
+                f"{motion.MAX_MOVE_DISTANCE_M * 100:.1f} cm."
             )
             continue
-        return value
+        return value_m
+
+
+def _prompt_bump_gz_bias(direction_label: str, default_value: float) -> float:
+    while True:
+        answer = input(
+            f"Effective bump GZ_BIAS for {direction_label} "
+            f"[{default_value:+.9f}], or Q to cancel: "
+        ).strip()
+        if not answer:
+            return default_value
+        if answer.lower() in {"q", "quit", "cancel"}:
+            raise RuntimeError("bump GZ_BIAS calibration cancelled")
+        try:
+            value = float(answer)
+        except ValueError:
+            print("Enter a finite GZ_BIAS value, or Q to cancel.")
+            continue
+        if math.isfinite(value):
+            return value
+        print("Enter a finite GZ_BIAS value, or Q to cancel.")
 
 
 def _prompt_motor_speed(prompt: str, default_value: int) -> int:
@@ -509,6 +533,26 @@ def _previous_bump_values(
             return None
         value = _finite_number(direction_entry.get("command_distance_m"))
         if value is None or not (0.0 < value <= motion.MAX_MOVE_DISTANCE_M):
+            return None
+        result[direction] = value
+    return result
+
+
+def _previous_bump_gz_values(
+    previous: Optional[Dict[str, object]],
+) -> Optional[Dict[str, float]]:
+    if not isinstance(previous, dict):
+        return None
+    bump = previous.get("bump_crossing")
+    if not isinstance(bump, dict):
+        return None
+    result: Dict[str, float] = {}
+    for direction in ("positive_y", "negative_y"):
+        direction_entry = bump.get(direction)
+        if not isinstance(direction_entry, dict):
+            return None
+        value = _finite_number(direction_entry.get("gz_bias"))
+        if value is None:
             return None
         result[direction] = value
     return result
@@ -1046,6 +1090,7 @@ def _write_registry(
     startup_stage: Optional[Dict[str, object]],
     gz_stage: Optional[Dict[str, object]],
     distance_stage: Optional[Dict[str, object]],
+    bump_gz_stage: Optional[Dict[str, object]],
     bump_stage: Optional[Dict[str, object]],
 ) -> None:
     registry = _load_registry()
@@ -1097,22 +1142,44 @@ def _write_registry(
         }
         quality["distance"] = copy.deepcopy(distance_stage["quality"])
 
-    if bump_stage is not None:
-        entry["bump_crossing"] = {
-            "positive_y": {
+    if bump_gz_stage is not None or bump_stage is not None:
+        old_bump = entry.get("bump_crossing")
+        bump_entry: Dict[str, object] = (
+            copy.deepcopy(old_bump) if isinstance(old_bump, dict) else {}
+        )
+        for direction in ("positive_y", "negative_y"):
+            old_direction = bump_entry.get(direction)
+            if not isinstance(old_direction, dict):
+                bump_entry[direction] = {}
+        positive_y = bump_entry["positive_y"]
+        negative_y = bump_entry["negative_y"]
+        assert isinstance(positive_y, dict) and isinstance(negative_y, dict)
+
+        if bump_gz_stage is not None:
+            positive_y["gz_bias"] = float(bump_gz_stage["positive_y_gz_bias"])
+            negative_y["gz_bias"] = float(bump_gz_stage["negative_y_gz_bias"])
+            quality["bump_gz_bias"] = copy.deepcopy(bump_gz_stage["quality"])
+
+        if bump_stage is not None:
+            positive_y.update({
                 "command_distance_m": bump_stage["positive_y_command_distance_m"],
                 "start": {"x": 9.06, "y": 4.30, "heading_deg": 90.0},
-            },
-            "negative_y": {
+            })
+            negative_y.update({
                 "command_distance_m": bump_stage["negative_y_command_distance_m"],
                 "start": {"x": 9.06, "y": 6.10, "heading_deg": 270.0},
-            },
-        }
+            })
+        entry["bump_crossing"] = bump_entry
+
+    if bump_stage is not None:
         quality["bump_crossing"] = copy.deepcopy(bump_stage["quality"])
 
     phase_statuses = [
         value.get("status") for key, value in quality.items()
-        if key in {"move_startup", "gz_bias", "distance", "bump_crossing"}
+        if key in {
+            "move_startup", "gz_bias", "distance", "bump_gz_bias",
+            "bump_crossing",
+        }
         and isinstance(value, dict)
     ]
     if phase_statuses:
@@ -1211,6 +1278,126 @@ def _run_distance_stage(scanner: str, gz_bias: float) -> Dict[str, object]:
         round_number += 1
 
 
+def _run_bump_gz_trial(
+    scanner: str,
+    direction: str,
+    start: Tuple[float, float, float],
+    default_gz_bias: float,
+    normal_gz_bias: float,
+    cmd_a: float,
+    cmd_b: float,
+    round_number: int,
+) -> Tuple[float, bool, str]:
+    x, y, heading_deg = start
+    print("\n------------------------------------------------------------")
+    print(f"BUMP GZ_BIAS — {direction}")
+    print(
+        f"Place the robot at ({x:.2f}, {y:.2f}) facing {heading_deg:.0f} degrees."
+    )
+    candidate = _prompt_bump_gz_bias(direction, default_gz_bias)
+    input("Confirm placement and clear the path, then press Enter to start: ")
+    print("Starting in 3 seconds...")
+    time.sleep(3.0)
+    calibration = _calibration_bootstrap_snapshot(
+        scanner,
+        normal_gz_bias,
+        cmd_a=cmd_a,
+        cmd_b=cmd_b,
+    )
+    ok, detail = motion._run_move(
+        forward=True,
+        distance_m=BUMP_GZ_TUNING_COMMAND_DISTANCE_M,
+        move_profile=(
+            "bump_crossing_up"
+            if direction == "positive_y"
+            else "bump_crossing_down"
+        ),
+        calibration=calibration,
+        calibration_gz_bias=candidate,
+    )
+    _append_row({
+        "recorded_at_utc": _utc_now(),
+        "scanner": scanner,
+        "phase": f"bump_gz_bias_{direction}",
+        "round": round_number,
+        "attempt": 1,
+        "accepted": False,
+        "trial_gz_bias": candidate,
+        "desired_distance_m": BUMP_GZ_TUNING_COMMAND_DISTANCE_M,
+        "gz_bias": candidate,
+        "execution_ok": ok,
+        "execution_detail": detail,
+    })
+    print(f"Movement {'completed' if ok else 'failed'}: {detail}")
+    return candidate, ok, detail
+
+
+def _prompt_bump_gz_pair_decision(both_executed: bool) -> str:
+    while True:
+        if both_executed:
+            answer = input(
+                "Are both bump-crossing headings satisfactory? [Y/n/q]: "
+            ).strip().lower()
+            if answer in {"", "y", "yes"}:
+                return "accept"
+        else:
+            answer = input(
+                "A movement failed. Repeat both trials or cancel? [R/q]: "
+            ).strip().lower()
+        if answer in {"n", "no", "r", "repeat"}:
+            return "repeat"
+        if answer in {"q", "quit", "cancel"}:
+            return "cancel"
+        print("Enter Y to accept both, N/R to repeat both, or Q to cancel.")
+
+
+def _run_bump_gz_stage(
+    scanner: str,
+    initial_values: Dict[str, float],
+    normal_gz_bias: float,
+    cmd_a: float,
+    cmd_b: float,
+) -> Dict[str, object]:
+    positive_default = initial_values["positive_y"]
+    negative_default = initial_values["negative_y"]
+    round_number = 1
+    while True:
+        print("\n============================================================")
+        print(f"BUMP GZ_BIAS CALIBRATION — ROUND {round_number}")
+        print("============================================================")
+        print(
+            "These are effective high-speed heading-control biases, not "
+            "stationary IMU measurements."
+        )
+        print(
+            f"Each trial commands {BUMP_GZ_TUNING_COMMAND_DISTANCE_M * 100:.0f} cm "
+            "using its bump-crossing profile."
+        )
+        positive, positive_ok, positive_detail = _run_bump_gz_trial(
+            scanner, "positive_y", BUMP_POSITIVE_Y_START, positive_default,
+            normal_gz_bias, cmd_a, cmd_b, round_number,
+        )
+        negative, negative_ok, negative_detail = _run_bump_gz_trial(
+            scanner, "negative_y", BUMP_NEGATIVE_Y_START, negative_default,
+            normal_gz_bias, cmd_a, cmd_b, round_number,
+        )
+        decision = _prompt_bump_gz_pair_decision(positive_ok and negative_ok)
+        if decision == "cancel":
+            raise RuntimeError("bump GZ_BIAS calibration cancelled")
+        if decision == "accept":
+            return {
+                "accepted_round": round_number,
+                "positive_y_gz_bias": positive,
+                "negative_y_gz_bias": negative,
+                "positive_y_execution_detail": positive_detail,
+                "negative_y_execution_detail": negative_detail,
+                "quality": {"status": "pass", "manual_pair_accepted": True},
+            }
+        positive_default = positive
+        negative_default = negative
+        round_number += 1
+
+
 def _previous_bump_distance(
     previous: Optional[Dict[str, object]],
     direction: str,
@@ -1301,7 +1488,7 @@ def _prompt_bump_pair_decision(both_executed: bool) -> str:
 def _run_bump_crossing_stage(
     scanner: str,
     previous: Optional[Dict[str, object]],
-    gz_bias: float,
+    bump_gz_values: Dict[str, float],
     cmd_a: float,
     cmd_b: float,
 ) -> Dict[str, object]:
@@ -1314,11 +1501,11 @@ def _run_bump_crossing_stage(
         print("============================================================")
         positive, positive_ok, positive_detail = _run_bump_trial(
             scanner, "positive_y", BUMP_POSITIVE_Y_START, positive_default,
-            gz_bias, cmd_a, cmd_b, round_number,
+            bump_gz_values["positive_y"], cmd_a, cmd_b, round_number,
         )
         negative, negative_ok, negative_detail = _run_bump_trial(
             scanner, "negative_y", BUMP_NEGATIVE_Y_START, negative_default,
-            gz_bias, cmd_a, cmd_b, round_number,
+            bump_gz_values["negative_y"], cmd_a, cmd_b, round_number,
         )
         decision = _prompt_bump_pair_decision(positive_ok and negative_ok)
         if decision == "cancel":
@@ -1419,12 +1606,45 @@ def _run_session(scanner: str) -> str:
         assert isinstance(fit, dict)
         kick_distance_m = float(distance_stage["kick_distance_m"])
 
+    old_bump_gz = _previous_bump_gz_values(previous)
+    if old_bump_gz is None:
+        initial_bump_gz = {
+            "positive_y": gz_bias,
+            "negative_y": gz_bias,
+        }
+        bump_gz_summary = (
+            f"legacy fallback to normal GZ_BIAS: +Y={gz_bias:+.9f}, "
+            f"-Y={gz_bias:+.9f}"
+        )
+    else:
+        initial_bump_gz = old_bump_gz
+        bump_gz_summary = (
+            f"saved +Y={old_bump_gz['positive_y']:+.9f}, "
+            f"-Y={old_bump_gz['negative_y']:+.9f}"
+        )
+    skip_bump_gz = _prompt_skip_phase("BUMP GZ_BIAS", bump_gz_summary)
+    bump_gz_stage: Optional[Dict[str, object]] = None
+    if skip_bump_gz:
+        bump_gz_values = initial_bump_gz
+    else:
+        bump_gz_stage = _run_bump_gz_stage(
+            scanner,
+            initial_bump_gz,
+            gz_bias,
+            float(fit["cmd_a"]),
+            float(fit["cmd_b"]),
+        )
+        bump_gz_values = {
+            "positive_y": float(bump_gz_stage["positive_y_gz_bias"]),
+            "negative_y": float(bump_gz_stage["negative_y_gz_bias"]),
+        }
+
     old_bump = _previous_bump_values(previous)
     bump_summary = None
     if old_bump is not None:
         bump_summary = (
-            f"+Y={old_bump['positive_y']:.3f} m, "
-            f"-Y={old_bump['negative_y']:.3f} m"
+            f"+Y={old_bump['positive_y'] * 100:.1f} cm, "
+            f"-Y={old_bump['negative_y'] * 100:.1f} cm"
         )
     skip_bump = _prompt_skip_phase("BUMP CROSSING", bump_summary)
     bump_stage: Optional[Dict[str, object]] = None
@@ -1435,7 +1655,7 @@ def _run_session(scanner: str) -> str:
         bump_stage = _run_bump_crossing_stage(
             scanner,
             previous,
-            gz_bias,
+            bump_gz_values,
             float(fit["cmd_a"]),
             float(fit["cmd_b"]),
         )
@@ -1448,12 +1668,14 @@ def _run_session(scanner: str) -> str:
         "move_startup": "skipped" if skip_startup else "calibrated",
         "gz_bias": "skipped" if skip_gz else "calibrated",
         "distance": "skipped" if skip_distance else "calibrated",
+        "bump_gz_bias": "skipped" if skip_bump_gz else "calibrated",
         "bump_crossing": "skipped" if skip_bump else "calibrated",
     }
     combined_quality: Dict[str, object] = {"phase_actions": phase_actions}
     new_statuses: List[str] = []
     for name, stage in (("move_startup", startup_stage),
                         ("gz_bias", gz_stage), ("distance", distance_stage),
+                        ("bump_gz_bias", bump_gz_stage),
                         ("bump_crossing", bump_stage)):
         if stage is not None:
             stage_quality = stage["quality"]
@@ -1470,6 +1692,7 @@ def _run_session(scanner: str) -> str:
         "move_startup_calibration": startup_stage or {"status": "skipped"},
         "gz_bias_calibration": gz_stage or {"status": "skipped"},
         "distance_calibration": distance_stage or {"status": "skipped"},
+        "bump_gz_bias_calibration": bump_gz_stage or {"status": "skipped"},
         "bump_crossing_calibration": bump_stage or {"status": "skipped"},
         "combined_quality": combined_quality,
         "candidate": {
@@ -1485,10 +1708,12 @@ def _run_session(scanner: str) -> str:
                            "skip_threshold_m": kick_distance_m / 2.0},
             "bump_crossing": {
                 "positive_y": {
-                    "command_distance_m": bump_values["positive_y"]
+                    "command_distance_m": bump_values["positive_y"],
+                    "gz_bias": bump_gz_values["positive_y"],
                 },
                 "negative_y": {
-                    "command_distance_m": bump_values["negative_y"]
+                    "command_distance_m": bump_values["negative_y"],
+                    "gz_bias": bump_gz_values["negative_y"],
                 },
             },
         },
@@ -1526,9 +1751,14 @@ def _run_session(scanner: str) -> str:
     print(f"Kick-only distance:        {kick_distance_m * 100:.2f} cm")
     print(f"Short-move skip below:     {kick_distance_m * 50:.2f} cm")
     print(
+        "Bump GZ_BIAS +Y/-Y:       "
+        f"{bump_gz_values['positive_y']:+.9f} / "
+        f"{bump_gz_values['negative_y']:+.9f}"
+    )
+    print(
         "Bump +Y/-Y command:       "
-        f"{bump_values['positive_y']:.3f} / "
-        f"{bump_values['negative_y']:.3f} m"
+        f"{bump_values['positive_y'] * 100:.1f} / "
+        f"{bump_values['negative_y'] * 100:.1f} cm"
     )
     if comparison.get("available"):
         print("Previous comparison:       " + (
@@ -1547,6 +1777,7 @@ def _run_session(scanner: str) -> str:
             startup_stage,
             gz_stage,
             distance_stage,
+            bump_gz_stage,
             bump_stage,
         )
         print(f"Registry updated:          {REGISTRY_PATH}")

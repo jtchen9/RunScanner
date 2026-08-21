@@ -30,6 +30,8 @@ class MobilityCalibrationSnapshot:
     warning: str = ""
     bump_positive_y_distance_m: Optional[float] = None
     bump_negative_y_distance_m: Optional[float] = None
+    bump_positive_y_gz_bias: Optional[float] = None
+    bump_negative_y_gz_bias: Optional[float] = None
     forward_kick_right_speed: int = 40
     forward_kick_left_speed: int = 40
 
@@ -69,6 +71,14 @@ class MobilityCalibrationSnapshot:
                 f"bump-crossing calibration is missing for {direction}"
             )
         return value
+
+    def move_gz_bias(self, move_profile: str) -> float:
+        values = {
+            "bump_crossing_up": self.bump_positive_y_gz_bias,
+            "bump_crossing_down": self.bump_negative_y_gz_bias,
+        }
+        value = values.get(move_profile)
+        return self.gz_bias if value is None else value
 
 
 class MobilityCalibrationError(RuntimeError):
@@ -142,6 +152,8 @@ def load_mobility_calibration(
         bump_crossing = entry.get("bump_crossing")
         bump_positive_y_distance_m: Optional[float] = None
         bump_negative_y_distance_m: Optional[float] = None
+        bump_positive_y_gz_bias: Optional[float] = None
+        bump_negative_y_gz_bias: Optional[float] = None
         if bump_crossing is not None:
             if not isinstance(bump_crossing, dict):
                 raise ValueError("bump_crossing must be an object")
@@ -159,6 +171,16 @@ def load_mobility_calibration(
             )
             if bump_positive_y_distance_m <= 0.0 or bump_negative_y_distance_m <= 0.0:
                 raise ValueError("bump-crossing command distances must be positive")
+            if positive_y.get("gz_bias") is not None:
+                bump_positive_y_gz_bias = _finite_number(
+                    positive_y.get("gz_bias"),
+                    "bump_crossing.positive_y.gz_bias",
+                )
+            if negative_y.get("gz_bias") is not None:
+                bump_negative_y_gz_bias = _finite_number(
+                    negative_y.get("gz_bias"),
+                    "bump_crossing.negative_y.gz_bias",
+                )
 
         move_startup = entry.get("move_startup")
         forward_kick_right_speed = 40
@@ -197,6 +219,8 @@ def load_mobility_calibration(
             calibrated_at_utc=str(entry.get("calibrated_at_utc") or ""),
             bump_positive_y_distance_m=bump_positive_y_distance_m,
             bump_negative_y_distance_m=bump_negative_y_distance_m,
+            bump_positive_y_gz_bias=bump_positive_y_gz_bias,
+            bump_negative_y_gz_bias=bump_negative_y_gz_bias,
             forward_kick_right_speed=forward_kick_right_speed,
             forward_kick_left_speed=forward_kick_left_speed,
         )

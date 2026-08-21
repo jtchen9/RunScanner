@@ -232,14 +232,15 @@ def _run_move(
 
     cruise_speed = _move_cruise_speed_for_profile(profile)
     calibration = calibration or _production_calibration_snapshot()
-    if calibration_gz_bias is not None or motor_distance_override is not None:
+    effective_gz_bias = (
+        float(calibration_gz_bias)
+        if calibration_gz_bias is not None
+        else calibration.move_gz_bias(profile)
+    )
+    if effective_gz_bias != calibration.gz_bias or motor_distance_override is not None:
         calibration = MobilityCalibrationSnapshot(
             scanner=calibration.scanner,
-            gz_bias=(
-                calibration.gz_bias
-                if calibration_gz_bias is None
-                else calibration_gz_bias
-            ),
+            gz_bias=effective_gz_bias,
             cmd_a=calibration.cmd_a,
             cmd_b=calibration.cmd_b,
             source="calibration_override",
@@ -249,6 +250,8 @@ def _run_move(
             warning=calibration.warning,
             bump_positive_y_distance_m=calibration.bump_positive_y_distance_m,
             bump_negative_y_distance_m=calibration.bump_negative_y_distance_m,
+            bump_positive_y_gz_bias=calibration.bump_positive_y_gz_bias,
+            bump_negative_y_gz_bias=calibration.bump_negative_y_gz_bias,
             forward_kick_right_speed=calibration.forward_kick_right_speed,
             forward_kick_left_speed=calibration.forward_kick_left_speed,
         )
@@ -370,6 +373,7 @@ def _run_move(
             f"forward_kick_left_speed={calibration.forward_kick_left_speed} "
             f"cruise_time={cruise_time:.3f} "
             f"move_profile={profile} "
+            f"move_gz_bias={calibration.gz_bias:.9f} "
             f"cruise_speed={cruise_speed} "
             f"heading_hold_enabled={HEADING_HOLD_ENABLED} "
             f"final_yaw_deg={yaw_deg:.3f} "
