@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import time
-from typing import Optional, Tuple
+from collections import deque
+from typing import Deque, NamedTuple, Optional, Tuple
 
 from TestGyro.DFRobot_RaspberryPi_DC_Motor import DFRobot_DC_Motor_IIC
 from icm20948 import ICM20948
@@ -82,11 +83,12 @@ TURN_CRUISE_SPEED = 40
 TURN_KICK_TIME_SEC = 0.3
 TURN_DT = 0.02
 TURN_STOP_MARGIN_DEG = 0.0
-TURN_TIMEOUT_SEC = 10.0
+TURN_TIMEOUT_SEC = 30.0
+TURN_PROGRESS_WINDOW_SEC = 2.0
+TURN_MIN_PROGRESS_DEG = 3.0
 
-# Direct turns smaller than this threshold can reach their target during the
-# fixed kick, before _run_turn() begins checking its target.  Build those
-# turns from two calibrated large turns instead.
+# Direct turns smaller than this threshold are dominated by the fixed kick.
+# Build those turns from two calibrated large turns instead.
 SMALL_TURN_COMPOSITE_THRESHOLD_DEG = 30.0
 SMALL_TURN_COMPOSITE_ANCHOR_DEG = 90.0
 SMALL_TURN_BETWEEN_LEGS_SEC = 1.0
@@ -104,6 +106,18 @@ MAX_MOVE_DISTANCE_M = 10.0
 
 MIN_TURN_ANGLE_DEG = 1.0
 MAX_TURN_ANGLE_DEG = 360.0
+
+
+class _TurnExecution(NamedTuple):
+    ok: bool
+    detail: str
+    measured_yaw_deg: float
+
+
+class _TurnPlanExecution(NamedTuple):
+    ok: bool
+    detail: str
+    measured_yaw_deg: float
 
 
 def _motor_begin() -> Tuple[bool, object, str]:
@@ -322,25 +336,25 @@ def _run_move(
         _safe_stop(m)
     
 
-def _run_turn(
+def _run_turn_measured(
     left: bool,
     angle_deg: float,
     *,
     calibration: Optional[MobilityCalibrationSnapshot] = None,
-) -> Tuple[bool, str]:
+) -> _TurnExecution:
     if angle_deg < MIN_TURN_ANGLE_DEG or angle_deg > MAX_TURN_ANGLE_DEG:
-        return False, f"BAD_COMMAND_ARGS angle_deg={angle_deg}"
+        return _TurnExecution(False, f"BAD_COMMAND_ARGS angle_deg={angle_deg}", 0.0)
 
     calibration = calibration or _production_calibration_snapshot()
 
     ok_m, m, detail_m = _motor_begin()
     if not ok_m:
-        return False, detail_m
+        return _TurnExecution(False, detail_m, 0.0)
 
     ok_i, imu, detail_i = _imu_begin()
     if not ok_i:
         _safe_stop(m)
-        return False, detail_i
+        return _TurnExecution(False, detail_i, 0.0)
 
     target_yaw = -abs(angle_deg) if left else abs(angle_deg)
     yaw_deg = 0.0
@@ -353,6 +367,54 @@ def _run_turn(
         yaw_deg = 0.0
         turn_started_at = time.monotonic()
         t_prev = turn_started_at
+        progress_history: Deque[Tuple[float, float]] = deque(
+            [(turn_started_at, 0.0)]
+        )
+
+        def target_reached() -> bool:
+            if left:
+                return yaw_deg <= (target_yaw + TURN_STOP_MARGIN_DEG)
+            return yaw_deg >= (target_yaw - TURN_STOP_MARGIN_DEG)
+
+        def check_stall(t_now: float) -> Tuple[bool, float, float]:
+            directed_progress = -yaw_deg if target_yaw < 0.0 else yaw_deg
+            progress_history.append((t_now, directed_progress))
+            cutoff = t_now - TURN_PROGRESS_WINDOW_SEC
+            # Keep the newest sample at or before the rolling-window cutoff.
+            while len(progress_history) >= 2 and progress_history[1][0] <= cutoff:
+                progress_history.popleft()
+            oldest_time, oldest_progress = progress_history[0]
+            window_sec = t_now - oldest_time
+            window_progress = directed_progress - oldest_progress
+            return (
+                window_sec >= TURN_PROGRESS_WINDOW_SEC
+                and window_progress < TURN_MIN_PROGRESS_DEG,
+                window_progress,
+                window_sec,
+            )
+
+        def fail_detail(
+            code: str,
+            phase: str,
+            elapsed_sec: float,
+            window_progress: Optional[float] = None,
+            window_sec: Optional[float] = None,
+        ) -> str:
+            detail = (
+                f"{code} phase={phase} "
+                f"angle_deg={angle_deg:.3f} "
+                f"target_yaw_deg={target_yaw:.3f} "
+                f"measured_yaw_deg={yaw_deg:.3f} "
+                f"elapsed_sec={elapsed_sec:.3f} "
+                f"timeout_sec={TURN_TIMEOUT_SEC:.3f}"
+            )
+            if window_progress is not None and window_sec is not None:
+                detail += (
+                    f" progress_window_deg={window_progress:.3f} "
+                    f"progress_window_sec={window_sec:.3f} "
+                    f"minimum_progress_deg={TURN_MIN_PROGRESS_DEG:.3f}"
+                )
+            return f"{detail} {calibration.detail()}"
 
         # kick phase
         if left:
@@ -372,16 +434,35 @@ def _run_turn(
             yaw_deg += yaw_rate * dt
 
             elapsed_sec = t_now - turn_started_at
+            if target_reached():
+                direction = "turn_left" if left else "turn_right"
+                return _TurnExecution(
+                    True,
+                    (
+                        f"{direction}_done angle_deg={angle_deg:.3f} "
+                        f"measured_yaw_deg={yaw_deg:.3f} "
+                        f"{calibration.detail()}"
+                    ),
+                    yaw_deg,
+                )
             if elapsed_sec >= TURN_TIMEOUT_SEC:
-                return False, (
-                    "TURN_TIMEOUT "
-                    "phase=kick "
-                    f"angle_deg={angle_deg:.3f} "
-                    f"target_yaw_deg={target_yaw:.3f} "
-                    f"measured_yaw_deg={yaw_deg:.3f} "
-                    f"elapsed_sec={elapsed_sec:.3f} "
-                    f"timeout_sec={TURN_TIMEOUT_SEC:.3f} "
-                    f"{calibration.detail()}"
+                return _TurnExecution(
+                    False,
+                    fail_detail("TURN_TIMEOUT", "kick", elapsed_sec),
+                    yaw_deg,
+                )
+            is_stalled, window_progress, window_sec = check_stall(t_now)
+            if is_stalled:
+                return _TurnExecution(
+                    False,
+                    fail_detail(
+                        "TURN_STALL",
+                        "kick",
+                        elapsed_sec,
+                        window_progress,
+                        window_sec,
+                    ),
+                    yaw_deg,
                 )
 
             if (t_now - t_kick_start) >= TURN_KICK_TIME_SEC:
@@ -406,42 +487,64 @@ def _run_turn(
             yaw_deg += yaw_rate * dt
 
             elapsed_sec = t_now - turn_started_at
+            # Completion takes precedence over timeout or stall at a boundary.
+            if target_reached():
+                break
             if elapsed_sec >= TURN_TIMEOUT_SEC:
-                return False, (
-                    "TURN_TIMEOUT "
-                    "phase=cruise "
-                    f"angle_deg={angle_deg:.3f} "
-                    f"target_yaw_deg={target_yaw:.3f} "
-                    f"measured_yaw_deg={yaw_deg:.3f} "
-                    f"elapsed_sec={elapsed_sec:.3f} "
-                    f"timeout_sec={TURN_TIMEOUT_SEC:.3f} "
-                    f"{calibration.detail()}"
+                return _TurnExecution(
+                    False,
+                    fail_detail("TURN_TIMEOUT", "cruise", elapsed_sec),
+                    yaw_deg,
                 )
-
-            if left:
-                if yaw_deg <= (target_yaw + TURN_STOP_MARGIN_DEG):
-                    break
-            else:
-                if yaw_deg >= (target_yaw - TURN_STOP_MARGIN_DEG):
-                    break
+            is_stalled, window_progress, window_sec = check_stall(t_now)
+            if is_stalled:
+                return _TurnExecution(
+                    False,
+                    fail_detail(
+                        "TURN_STALL",
+                        "cruise",
+                        elapsed_sec,
+                        window_progress,
+                        window_sec,
+                    ),
+                    yaw_deg,
+                )
 
             time.sleep(TURN_DT)
 
         direction = "turn_left" if left else "turn_right"
-        return True, (
-            f"{direction}_done "
-            f"angle_deg={angle_deg:.3f} "
-            f"measured_yaw_deg={yaw_deg:.3f} "
-            f"{calibration.detail()}"
+        return _TurnExecution(
+            True,
+            (
+                f"{direction}_done angle_deg={angle_deg:.3f} "
+                f"measured_yaw_deg={yaw_deg:.3f} "
+                f"{calibration.detail()}"
+            ),
+            yaw_deg,
         )
 
     except Exception as e:
-        return False, f"TURN_EXEC_FAIL {e}"
+        return _TurnExecution(False, f"TURN_EXEC_FAIL {e}", yaw_deg)
 
     finally:
         # Every exit path—including timeout, sensor exception, or normal
         # completion—must remove motor drive before returning to the agent.
         _safe_stop(m)
+
+
+def _run_turn(
+    left: bool,
+    angle_deg: float,
+    *,
+    calibration: Optional[MobilityCalibrationSnapshot] = None,
+) -> Tuple[bool, str]:
+    """Backward-compatible two-value wrapper around the measured primitive."""
+    result = _run_turn_measured(
+        left=left,
+        angle_deg=angle_deg,
+        calibration=calibration,
+    )
+    return result.ok, result.detail
 
 
 def move_forward(distance_m: float, move_profile: str | None = None) -> Tuple[bool, str]:
@@ -494,78 +597,173 @@ def turn_right(
     return ok, f"physical_turn_right_cw {detail}"
 
 
-def _run_composite_signed_turn(angle_deg: float) -> Tuple[bool, str]:
-    """Execute a small signed turn as two calibrated large opposite turns.
-
-    Positive request:
-        +anchor, then -(anchor - requested)
-
-    Negative request:
-        -anchor, then +(anchor - abs(requested))
-
-    The public sign convention is preserved.  The NMS and command payload do
-    not need to know that the robot used two physical turns internally.
-    """
-    calibration = _production_calibration_snapshot()
+def _signed_turn_plan(angle_deg: float) -> Tuple[float, ...]:
+    """Return the physical signed legs for one requested logical angle."""
     requested_abs = abs(angle_deg)
-    second_leg_abs = SMALL_TURN_COMPOSITE_ANCHOR_DEG - requested_abs
+    if requested_abs < MIN_TURN_ANGLE_DEG:
+        return ()
+    if requested_abs >= SMALL_TURN_COMPOSITE_THRESHOLD_DEG:
+        return (angle_deg,)
 
+    second_leg_abs = SMALL_TURN_COMPOSITE_ANCHOR_DEG - requested_abs
     if second_leg_abs < MIN_TURN_ANGLE_DEG:
-        return False, (
+        raise ValueError(
             "COMPOSITE_TURN_CONFIG_FAIL "
             f"angle_deg={angle_deg:.3f} "
             f"anchor_deg={SMALL_TURN_COMPOSITE_ANCHOR_DEG:.3f} "
             f"second_leg_deg={second_leg_abs:.3f}"
         )
-
     if angle_deg > 0.0:
-        first_leg_signed = SMALL_TURN_COMPOSITE_ANCHOR_DEG
-        second_leg_signed = -second_leg_abs
-        first_turn = turn_left
-        second_turn = turn_right
-    else:
-        first_leg_signed = -SMALL_TURN_COMPOSITE_ANCHOR_DEG
-        second_leg_signed = second_leg_abs
-        first_turn = turn_right
-        second_turn = turn_left
+        return (SMALL_TURN_COMPOSITE_ANCHOR_DEG, -second_leg_abs)
+    return (-SMALL_TURN_COMPOSITE_ANCHOR_DEG, second_leg_abs)
 
-    ok_first, detail_first = first_turn(
-        SMALL_TURN_COMPOSITE_ANCHOR_DEG,
-        calibration=calibration,
+
+def _execute_signed_leg(
+    signed_angle_deg: float,
+    *,
+    calibration: MobilityCalibrationSnapshot,
+) -> _TurnExecution:
+    """Execute one physical leg while retaining partial measured yaw."""
+    if signed_angle_deg > 0.0:
+        result = _run_turn_measured(
+            left=False,
+            angle_deg=abs(signed_angle_deg),
+            calibration=calibration,
+        )
+        prefix = "physical_turn_left_ccw"
+    else:
+        result = _run_turn_measured(
+            left=True,
+            angle_deg=abs(signed_angle_deg),
+            calibration=calibration,
+        )
+        prefix = "physical_turn_right_cw"
+    return _TurnExecution(
+        result.ok,
+        f"{prefix} {result.detail}",
+        result.measured_yaw_deg,
     )
-    if not ok_first:
-        return False, (
-            "COMPOSITE_TURN_LEG1_FAIL "
-            f"requested_angle_deg={angle_deg:.3f} "
-            f"leg1_angle_deg={first_leg_signed:.3f} "
-            f"detail={detail_first}"
+
+
+def _execute_plan_without_retry(
+    legs: Tuple[float, ...],
+    *,
+    calibration: MobilityCalibrationSnapshot,
+) -> _TurnPlanExecution:
+    """Execute attempt 2 once, with no nested recovery for any leg."""
+    measured_total = 0.0
+    details = []
+    for leg_index, leg_angle in enumerate(legs, start=1):
+        result = _execute_signed_leg(leg_angle, calibration=calibration)
+        measured_total += result.measured_yaw_deg
+        details.append(
+            f"leg{leg_index}_requested_deg={leg_angle:.3f} "
+            f"leg{leg_index}_measured_deg={result.measured_yaw_deg:.3f} "
+            f"leg{leg_index}_detail=({result.detail})"
+        )
+        if not result.ok:
+            return _TurnPlanExecution(
+                False,
+                f"ATTEMPT2_RESIDUAL_LEG{leg_index}_FAIL " + " ".join(details),
+                measured_total,
+            )
+        if leg_index < len(legs):
+            _sleep_checked(SMALL_TURN_BETWEEN_LEGS_SEC)
+    return _TurnPlanExecution(
+        True,
+        "ATTEMPT2_RESIDUAL_DONE " + " ".join(details),
+        measured_total,
+    )
+
+
+def _run_signed_turn_with_recovery(angle_deg: float) -> Tuple[bool, str]:
+    """Reach one final orientation with at most one residual-yaw recovery.
+
+    If an original leg fails, its partial measured yaw is retained, remaining
+    original legs are abandoned, and attempt 2 is replanned directly to the
+    original logical target.  Attempt 2 may be composite but is never retried.
+    """
+    calibration = _production_calibration_snapshot()
+    original_legs = _signed_turn_plan(angle_deg)
+    measured_total = 0.0
+    attempt1_details = []
+
+    for leg_index, leg_angle in enumerate(original_legs, start=1):
+        result = _execute_signed_leg(leg_angle, calibration=calibration)
+        measured_total += result.measured_yaw_deg
+        attempt1_details.append(
+            f"attempt1_leg{leg_index}_requested_deg={leg_angle:.3f} "
+            f"attempt1_leg{leg_index}_measured_deg={result.measured_yaw_deg:.3f} "
+            f"attempt1_leg{leg_index}_detail=({result.detail})"
         )
 
-    _sleep_checked(SMALL_TURN_BETWEEN_LEGS_SEC)
+        if result.ok:
+            if leg_index < len(original_legs):
+                _sleep_checked(SMALL_TURN_BETWEEN_LEGS_SEC)
+            continue
 
-    ok_second, detail_second = second_turn(
-        second_leg_abs,
-        calibration=calibration,
-    )
-    if not ok_second:
-        return False, (
-            "COMPOSITE_TURN_LEG2_FAIL "
+        residual_angle = angle_deg - measured_total
+        if abs(residual_angle) < MIN_TURN_ANGLE_DEG:
+            _sleep_checked(SMALL_TURN_FINAL_SETTLE_SEC)
+            return True, (
+                "signed_turn_recovered_within_tolerance "
+                f"requested_angle_deg={angle_deg:.3f} "
+                f"attempt1_measured_total_deg={measured_total:.3f} "
+                f"residual_angle_deg={residual_angle:.3f} "
+                + " ".join(attempt1_details)
+            )
+
+        try:
+            recovery_legs = _signed_turn_plan(residual_angle)
+        except ValueError as exc:
+            return False, (
+                "SIGNED_TURN_RECOVERY_PLAN_FAIL "
+                f"requested_angle_deg={angle_deg:.3f} "
+                f"attempt1_measured_total_deg={measured_total:.3f} "
+                f"residual_angle_deg={residual_angle:.3f} detail={exc} "
+                + " ".join(attempt1_details)
+            )
+
+        _sleep_checked(SMALL_TURN_BETWEEN_LEGS_SEC)
+        recovery = _execute_plan_without_retry(
+            recovery_legs,
+            calibration=calibration,
+        )
+        final_measured_total = measured_total + recovery.measured_yaw_deg
+        final_residual = angle_deg - final_measured_total
+        if not recovery.ok:
+            return False, (
+                "SIGNED_TURN_ATTEMPT2_FAIL "
+                f"requested_angle_deg={angle_deg:.3f} "
+                f"attempt1_measured_total_deg={measured_total:.3f} "
+                f"attempt2_requested_residual_deg={residual_angle:.3f} "
+                f"attempt2_measured_deg={recovery.measured_yaw_deg:.3f} "
+                f"final_measured_total_deg={final_measured_total:.3f} "
+                f"final_residual_deg={final_residual:.3f} "
+                + " ".join(attempt1_details)
+                + f" attempt2_detail=({recovery.detail})"
+            )
+
+        _sleep_checked(SMALL_TURN_FINAL_SETTLE_SEC)
+        return True, (
+            "signed_turn_attempt2_recovered "
             f"requested_angle_deg={angle_deg:.3f} "
-            f"leg1_angle_deg={first_leg_signed:.3f} "
-            f"leg2_angle_deg={second_leg_signed:.3f} "
-            f"leg1_detail={detail_first} "
-            f"leg2_detail={detail_second}"
+            f"attempt1_measured_total_deg={measured_total:.3f} "
+            f"attempt2_requested_residual_deg={residual_angle:.3f} "
+            f"attempt2_measured_deg={recovery.measured_yaw_deg:.3f} "
+            f"final_measured_total_deg={final_measured_total:.3f} "
+            f"final_residual_deg={final_residual:.3f} "
+            + " ".join(attempt1_details)
+            + f" attempt2_detail=({recovery.detail})"
         )
 
     _sleep_checked(SMALL_TURN_FINAL_SETTLE_SEC)
-
+    plan_kind = "composite" if len(original_legs) > 1 else "direct"
     return True, (
-        "composite_small_turn_done "
-        f"requested_angle_deg={angle_deg:.3f} "
-        f"leg1_angle_deg={first_leg_signed:.3f} "
-        f"leg2_angle_deg={second_leg_signed:.3f} "
-        f"leg1_detail={detail_first} "
-        f"leg2_detail={detail_second}"
+        "signed_turn_attempt1_done "
+        f"plan_kind={plan_kind} requested_angle_deg={angle_deg:.3f} "
+        f"measured_total_deg={measured_total:.3f} "
+        + " ".join(attempt1_details)
     )
 
 
@@ -593,16 +791,10 @@ def turn_signed(angle_deg: float) -> Tuple[bool, str]:
     if abs(angle) > MAX_TURN_ANGLE_DEG:
         return False, f"BAD_COMMAND_ARGS angle_deg={angle}"
 
-    if abs(angle) < SMALL_TURN_COMPOSITE_THRESHOLD_DEG:
-        ok, detail = _run_composite_signed_turn(angle)
-        return ok, f"signed_composite {detail}"
-
-    if angle > 0:
-        ok, detail = turn_left(abs(angle))
-        return ok, f"signed_ccw_positive {detail}"
-
-    ok, detail = turn_right(abs(angle))
-    return ok, f"signed_cw_negative {detail}"
+    try:
+        return _run_signed_turn_with_recovery(angle)
+    except Exception as exc:
+        return False, f"TURN_EXEC_FAIL {type(exc).__name__}: {exc}"
 
 
 # Backward-compatible alias for command dispatch code that prefers a more
