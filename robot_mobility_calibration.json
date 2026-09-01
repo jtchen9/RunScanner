@@ -1,5 +1,82 @@
 {
   "robots": {
+    "twin-scout-alpha": {
+      "buck_voltage_v": 9.0,
+      "bump_crossing": {
+        "negative_y": {
+          "command_distance_m": 0.68,
+          "gz_bias": 0.47,
+          "start": {
+            "heading_deg": 270.0,
+            "x": 9.06,
+            "y": 6.1
+          }
+        },
+        "positive_y": {
+          "command_distance_m": 0.68,
+          "gz_bias": 0.47,
+          "start": {
+            "heading_deg": 90.0,
+            "x": 9.06,
+            "y": 4.3
+          }
+        }
+      },
+      "calibrated_at_utc": "2026-09-01T06:40:07.915523+00:00",
+      "distance_model": {
+        "actual_a": 0.8759748172217708,
+        "actual_b": 0.07116165718927703,
+        "cmd_a": 1.1415853290983702,
+        "cmd_b": -0.08123710384160622
+      },
+      "gz_bias": 0.47,
+      "move_startup": {
+        "forward": {
+          "left_kick_speed": 40,
+          "right_kick_speed": 40
+        }
+      },
+      "production_loader_enabled": true,
+      "quality": {
+        "bump_crossing": {
+          "manual_pair_accepted": true,
+          "status": "pass"
+        },
+        "bump_gz_bias": {
+          "manual_pair_accepted": true,
+          "status": "pass"
+        },
+        "distance": {
+          "checks": {
+            "fit_rmse": true,
+            "r_squared": true,
+            "verify_distance": true
+          },
+          "fit_rmse_m": 0.014595618785565355,
+          "r_squared": 0.9994364934866381,
+          "status": "pass",
+          "verification_distance_error_m": 0.020000000000000018
+        },
+        "gz_bias": {
+          "checks": {
+            "finite_gz_bias": true,
+            "minimum_stationary_sample_count": true,
+            "physical_3m_walk_accepted": true
+          },
+          "status": "pass"
+        },
+        "move_startup": {
+          "manual_startup_heading_accepted": true,
+          "status": "pass"
+        },
+        "status": "pass"
+      },
+      "short_move": {
+        "kick_distance_m": 0.065,
+        "skip_threshold_m": 0.0325
+      },
+      "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
+    },
     "twin-scout-bravo": {
       "buck_voltage_v": 9.0,
       "bump_crossing": {
@@ -79,7 +156,6 @@
     },
     "twin-scout-charlie": {
       "buck_voltage_v": 9.0,
-      "calibrated_at_utc": "2026-09-01T05:59:25.515216+00:00",
       "bump_crossing": {
         "negative_y": {
           "command_distance_m": 0.65,
@@ -90,6 +166,7 @@
           "gz_bias": -2.0
         }
       },
+      "calibrated_at_utc": "2026-09-01T05:59:25.515216+00:00",
       "distance_model": {
         "actual_a": 0.8599309504467912,
         "actual_b": 0.06745938261575957,
@@ -102,10 +179,6 @@
           "left_kick_speed": 35,
           "right_kick_speed": 45
         }
-      },
-      "short_move": {
-        "kick_distance_m": 0.05,
-        "skip_threshold_m": 0.025
       },
       "production_loader_enabled": true,
       "quality": {
@@ -148,6 +221,10 @@
           "move_startup": "calibrated"
         },
         "status": "pass"
+      },
+      "short_move": {
+        "kick_distance_m": 0.05,
+        "skip_threshold_m": 0.025
       },
       "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
     },
