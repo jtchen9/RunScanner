@@ -4,9 +4,9 @@
 The tool first measures stationary GZ_BIAS for five seconds and uses that
 measurement only as the initial candidate for repeated 3 m straight-walking
 trials.  The operator accepts the GZ_BIAS that produces a satisfactory physical
-path.  It then asks only for measured forward distance during distance
-calibration.  The production registry is changed only after both stages are
-accepted and the operator approves the conclusion.
+path. It calibrates turn stopping from ten zero-margin 90-degree turns, then
+asks only for measured forward distance during distance calibration. The
+production registry is changed only after the operator approves the conclusion.
 
 The former seven-movement zero-crossing experiment remains below as a disabled
 diagnostic function so it can be tested again without reconstructing it.
@@ -35,7 +35,11 @@ if str(ROBOT_ROOT) not in sys.path:
 
 import robot_mobility_motion as motion
 from config import MOTOR_MOVE_DISTANCE_MODEL
-from robot_mobility_calibration_registry import MobilityCalibrationSnapshot
+from robot_mobility_calibration_registry import (
+    DEFAULT_TURN_STOP_MARGIN_DEG,
+    MAX_ABS_TURN_STOP_MARGIN_DEG,
+    MobilityCalibrationSnapshot,
+)
 
 
 # Fixed sequence. Non-monotonic order reduces correlation between test distance
@@ -65,6 +69,9 @@ BUMP_DEFAULT_COMMAND_DISTANCE_M = 0.70
 BUMP_GZ_TUNING_COMMAND_DISTANCE_M = 0.70
 DEFAULT_FORWARD_KICK_RIGHT_SPEED = 40
 DEFAULT_FORWARD_KICK_LEFT_SPEED = 40
+TURN_CALIBRATION_COUNT = 10
+TURN_CALIBRATION_ANGLE_DEG = 90.0
+TURN_CALIBRATION_SETTLE_SEC = 0.75
 
 # These session values are installed into every calibration-only snapshot after
 # the startup phase is accepted or skipped. Production snapshots come from the
@@ -96,6 +103,9 @@ CSV_FIELDS = (
     "execution_detail",
     "right_kick_speed",
     "left_kick_speed",
+    "turn_index",
+    "turn_total_error_deg",
+    "turn_stop_margin_deg",
 )
 
 
@@ -300,6 +310,8 @@ def _calibration_bootstrap_snapshot(
     *,
     cmd_a: Optional[float] = None,
     cmd_b: Optional[float] = None,
+    turn_ccw_stop_margin_deg: float = DEFAULT_TURN_STOP_MARGIN_DEG,
+    turn_cw_stop_margin_deg: float = DEFAULT_TURN_STOP_MARGIN_DEG,
 ):
     """Build a calibration-only snapshot without consulting production state.
 
@@ -320,6 +332,8 @@ def _calibration_bootstrap_snapshot(
         warning="calibration_bootstrap_not_for_production",
         forward_kick_right_speed=SESSION_FORWARD_KICK_RIGHT_SPEED,
         forward_kick_left_speed=SESSION_FORWARD_KICK_LEFT_SPEED,
+        turn_ccw_stop_margin_deg=float(turn_ccw_stop_margin_deg),
+        turn_cw_stop_margin_deg=float(turn_cw_stop_margin_deg),
     )
 
 
@@ -499,6 +513,26 @@ def _previous_startup_values(
     return right_int, left_int
 
 
+def _previous_turn_stop_margins(
+    previous: Optional[Dict[str, object]],
+) -> Optional[Tuple[float, float]]:
+    if not isinstance(previous, dict):
+        return None
+    turning = previous.get("turning")
+    if not isinstance(turning, dict):
+        return None
+    legacy = turning.get("stop_margin_deg")
+    ccw = _finite_number(turning.get("ccw_stop_margin_deg", legacy))
+    cw = _finite_number(turning.get("cw_stop_margin_deg", legacy))
+    if ccw is None or cw is None:
+        return None
+    if abs(ccw) > MAX_ABS_TURN_STOP_MARGIN_DEG:
+        return None
+    if abs(cw) > MAX_ABS_TURN_STOP_MARGIN_DEG:
+        return None
+    return ccw, cw
+
+
 def _previous_distance_values(
     previous: Optional[Dict[str, object]],
 ) -> Optional[Tuple[Dict[str, float], float]]:
@@ -641,6 +675,185 @@ def _prompt_accept_stage(stage_name: str) -> bool:
         if answer in {"r", "retry"}:
             return False
         print("Enter A to accept this result or R to repeat this stage.")
+
+
+def _prompt_signed_turn_error(direction_label: str) -> float:
+    while True:
+        answer = input(
+            f"Measured total heading error after ten {direction_label} turns "
+            "in degrees "
+            "(+ overshoot, - undershoot): "
+        ).strip()
+        try:
+            total_error_deg = float(answer)
+        except ValueError:
+            print("Enter a signed finite number in degrees.")
+            continue
+        if not math.isfinite(total_error_deg):
+            print("Enter a signed finite number in degrees.")
+            continue
+        stop_margin_deg = total_error_deg / TURN_CALIBRATION_COUNT
+        if abs(stop_margin_deg) > MAX_ABS_TURN_STOP_MARGIN_DEG:
+            print(
+                "The resulting per-turn margin exceeds the allowed magnitude "
+                f"of {MAX_ABS_TURN_STOP_MARGIN_DEG:.1f} degrees. Check the "
+                "measurement and enter it again."
+            )
+            continue
+        return total_error_deg
+
+
+def _run_directional_turn_stop_margin_stage(
+    scanner: str,
+    gz_bias: float,
+    *,
+    direction_key: str,
+    direction_label: str,
+    primitive_left: bool,
+) -> Dict[str, object]:
+    round_number = 1
+    while True:
+        print("\n============================================================")
+        print(
+            "TURN STOP-MARGIN CALIBRATION — "
+            f"TEN 90-DEGREE {direction_label} TURNS"
+        )
+        print("============================================================")
+        print(
+            "This experiment deliberately uses a zero-degree stop margin. "
+            f"The robot will make ten physical {direction_label} 90-degree turns."
+        )
+        print(
+            "Mark the starting heading. After 900 commanded degrees, the "
+            "expected final heading is 180 degrees from the start."
+        )
+        print(
+            "Measure the signed total error from that expected heading: "
+            f"positive if it continued too far {direction_label}, "
+            "negative if it stopped short."
+        )
+        ready = input(
+            "Place the robot on the marked heading with clear space; "
+            "press Enter to start, or Q to cancel: "
+        ).strip().lower()
+        if ready in {"q", "quit", "cancel"}:
+            raise RuntimeError("turn stop-margin calibration cancelled")
+
+        calibration = _calibration_bootstrap_snapshot(
+            scanner,
+            gz_bias,
+            turn_ccw_stop_margin_deg=0.0,
+            turn_cw_stop_margin_deg=0.0,
+        )
+        execution_details: List[str] = []
+        round_ok = True
+        print("Starting in 3 seconds...")
+        time.sleep(3.0)
+        for turn_index in range(1, TURN_CALIBRATION_COUNT + 1):
+            result = motion._run_turn_measured(
+                left=primitive_left,
+                angle_deg=TURN_CALIBRATION_ANGLE_DEG,
+                calibration=calibration,
+            )
+            execution_details.append(result.detail)
+            _append_row({
+                "recorded_at_utc": _utc_now(),
+                "scanner": scanner,
+                "phase": f"turn_stop_margin_{direction_key}_raw",
+                "round": round_number,
+                "attempt": 1,
+                "accepted": result.ok,
+                "gz_bias": gz_bias,
+                "execution_ok": result.ok,
+                "execution_detail": result.detail,
+                "turn_index": turn_index,
+                "turn_stop_margin_deg": 0.0,
+            })
+            print(
+                f"Turn {turn_index}/{TURN_CALIBRATION_COUNT}: "
+                f"{'completed' if result.ok else 'FAILED'}"
+            )
+            if not result.ok:
+                print(f"Movement failed: {result.detail}")
+                round_ok = False
+                break
+            time.sleep(TURN_CALIBRATION_SETTLE_SEC)
+
+        if not round_ok:
+            answer = input(
+                "Reposition the robot and repeat the complete ten-turn stage? "
+                "[Y/n]: "
+            ).strip().lower()
+            if answer in {"", "y", "yes"}:
+                round_number += 1
+                continue
+            raise RuntimeError("turn stop-margin calibration stopped after failure")
+
+        total_error_deg = _prompt_signed_turn_error(direction_label)
+        stop_margin_deg = total_error_deg / TURN_CALIBRATION_COUNT
+        print("\nTURN STOP-MARGIN RESULT")
+        print(f"Total physical error:      {total_error_deg:+.3f} deg")
+        print(f"Per-turn stop margin:      {stop_margin_deg:+.3f} deg")
+        if _prompt_accept_stage(f"{direction_label} turn stop-margin"):
+            quality = {
+                "status": "pass",
+                "manual_ten_turn_measurement_accepted": True,
+            }
+            _append_row({
+                "recorded_at_utc": _utc_now(),
+                "scanner": scanner,
+                "phase": f"turn_stop_margin_{direction_key}_result",
+                "round": round_number,
+                "attempt": 1,
+                "accepted": True,
+                "gz_bias": gz_bias,
+                "execution_ok": True,
+                "execution_detail": "manual_ten_turn_measurement_accepted",
+                "turn_total_error_deg": total_error_deg,
+                "turn_stop_margin_deg": stop_margin_deg,
+            })
+            return {
+                "accepted_round": round_number,
+                "direction": direction_key,
+                "turn_count": TURN_CALIBRATION_COUNT,
+                "turn_angle_deg": TURN_CALIBRATION_ANGLE_DEG,
+                "calibration_trial_stop_margin_deg": 0.0,
+                "total_physical_error_deg": total_error_deg,
+                "stop_margin_deg": stop_margin_deg,
+                "execution_details": execution_details,
+                "quality": quality,
+            }
+        round_number += 1
+
+
+def _run_turn_stop_margin_stage(
+    scanner: str,
+    gz_bias: float,
+) -> Dict[str, object]:
+    ccw = _run_directional_turn_stop_margin_stage(
+        scanner,
+        gz_bias,
+        direction_key="ccw",
+        direction_label="left/CCW",
+        primitive_left=False,
+    )
+    cw = _run_directional_turn_stop_margin_stage(
+        scanner,
+        gz_bias,
+        direction_key="cw",
+        direction_label="right/CW",
+        primitive_left=True,
+    )
+    return {
+        "ccw": ccw,
+        "cw": cw,
+        "ccw_stop_margin_deg": float(ccw["stop_margin_deg"]),
+        "cw_stop_margin_deg": float(cw["stop_margin_deg"]),
+        "quality": {
+            "status": "pass",
+            "manual_ccw_and_cw_ten_turn_measurements_accepted": True,
+        },
+    }
 
 
 def _prompt_gz_candidate(static_gz_bias: float) -> float:
@@ -1089,6 +1302,7 @@ def _write_registry(
     buck_voltage_v: float,
     startup_stage: Optional[Dict[str, object]],
     gz_stage: Optional[Dict[str, object]],
+    turn_stage: Optional[Dict[str, object]],
     distance_stage: Optional[Dict[str, object]],
     bump_gz_stage: Optional[Dict[str, object]],
     bump_stage: Optional[Dict[str, object]],
@@ -1125,6 +1339,13 @@ def _write_registry(
     if gz_stage is not None:
         entry["gz_bias"] = float(gz_stage["gz_bias"])
         quality["gz_bias"] = copy.deepcopy(gz_stage["quality"])
+
+    if turn_stage is not None:
+        entry["turning"] = {
+            "ccw_stop_margin_deg": float(turn_stage["ccw_stop_margin_deg"]),
+            "cw_stop_margin_deg": float(turn_stage["cw_stop_margin_deg"]),
+        }
+        quality["turn_stop_margin"] = copy.deepcopy(turn_stage["quality"])
 
     if distance_stage is not None:
         fit = distance_stage["regression"]
@@ -1177,7 +1398,7 @@ def _write_registry(
     phase_statuses = [
         value.get("status") for key, value in quality.items()
         if key in {
-            "move_startup", "gz_bias", "distance", "bump_gz_bias",
+            "move_startup", "gz_bias", "turn_stop_margin", "distance", "bump_gz_bias",
             "bump_crossing",
         }
         and isinstance(value, dict)
@@ -1582,6 +1803,31 @@ def _run_session(scanner: str) -> str:
         gz_stage = _run_gz_bias_stage(scanner, previous)
         gz_bias = float(gz_stage["gz_bias"])
 
+    old_turn_stop_margins = _previous_turn_stop_margins(previous)
+    turn_summary = None
+    if previous is not None:
+        turn_summary = (
+            f"CCW={old_turn_stop_margins[0]:+.3f}, "
+            f"CW={old_turn_stop_margins[1]:+.3f} deg"
+            if old_turn_stop_margins is not None
+            else (
+                "legacy/default CCW=CW="
+                f"{DEFAULT_TURN_STOP_MARGIN_DEG:+.3f} deg"
+            )
+        )
+    skip_turn = _prompt_skip_phase("TURN STOP MARGIN", turn_summary)
+    turn_stage: Optional[Dict[str, object]] = None
+    if skip_turn:
+        if old_turn_stop_margins is None:
+            turn_ccw_stop_margin_deg = DEFAULT_TURN_STOP_MARGIN_DEG
+            turn_cw_stop_margin_deg = DEFAULT_TURN_STOP_MARGIN_DEG
+        else:
+            turn_ccw_stop_margin_deg, turn_cw_stop_margin_deg = old_turn_stop_margins
+    else:
+        turn_stage = _run_turn_stop_margin_stage(scanner, gz_bias)
+        turn_ccw_stop_margin_deg = float(turn_stage["ccw_stop_margin_deg"])
+        turn_cw_stop_margin_deg = float(turn_stage["cw_stop_margin_deg"])
+
     old_distance = _previous_distance_values(previous)
     distance_summary = None
     if old_distance is not None:
@@ -1667,6 +1913,7 @@ def _run_session(scanner: str) -> str:
     phase_actions = {
         "move_startup": "skipped" if skip_startup else "calibrated",
         "gz_bias": "skipped" if skip_gz else "calibrated",
+        "turn_stop_margin": "skipped" if skip_turn else "calibrated",
         "distance": "skipped" if skip_distance else "calibrated",
         "bump_gz_bias": "skipped" if skip_bump_gz else "calibrated",
         "bump_crossing": "skipped" if skip_bump else "calibrated",
@@ -1675,6 +1922,7 @@ def _run_session(scanner: str) -> str:
     new_statuses: List[str] = []
     for name, stage in (("move_startup", startup_stage),
                         ("gz_bias", gz_stage), ("distance", distance_stage),
+                        ("turn_stop_margin", turn_stage),
                         ("bump_gz_bias", bump_gz_stage),
                         ("bump_crossing", bump_stage)):
         if stage is not None:
@@ -1691,6 +1939,7 @@ def _run_session(scanner: str) -> str:
         "phase_actions": phase_actions,
         "move_startup_calibration": startup_stage or {"status": "skipped"},
         "gz_bias_calibration": gz_stage or {"status": "skipped"},
+        "turn_stop_margin_calibration": turn_stage or {"status": "skipped"},
         "distance_calibration": distance_stage or {"status": "skipped"},
         "bump_gz_bias_calibration": bump_gz_stage or {"status": "skipped"},
         "bump_crossing_calibration": bump_stage or {"status": "skipped"},
@@ -1704,6 +1953,10 @@ def _run_session(scanner: str) -> str:
                 },
             },
             "gz_bias": gz_bias, "distance_model": fit,
+            "turning": {
+                "ccw_stop_margin_deg": turn_ccw_stop_margin_deg,
+                "cw_stop_margin_deg": turn_cw_stop_margin_deg,
+            },
             "short_move": {"kick_distance_m": kick_distance_m,
                            "skip_threshold_m": kick_distance_m / 2.0},
             "bump_crossing": {
@@ -1732,6 +1985,11 @@ def _run_session(scanner: str) -> str:
         f"{startup_right_speed} / {startup_left_speed}"
     )
     print(f"Accepted GZ_BIAS:          {gz_bias:+.9f}")
+    print(
+        "Turn stop margin CCW/CW:   "
+        f"{turn_ccw_stop_margin_deg:+.3f} / "
+        f"{turn_cw_stop_margin_deg:+.3f} deg"
+    )
     print(f"Phase actions:             {phase_actions}")
     if gz_stage is not None:
         print("GZ calibration method:     static seed + accepted 3 m physical walk")
@@ -1776,6 +2034,7 @@ def _run_session(scanner: str) -> str:
             buck_voltage_v,
             startup_stage,
             gz_stage,
+            turn_stage,
             distance_stage,
             bump_gz_stage,
             bump_stage,

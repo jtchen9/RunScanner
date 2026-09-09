@@ -75,6 +75,10 @@
         "kick_distance_m": 0.065,
         "skip_threshold_m": 0.0325
       },
+      "turning": {
+        "ccw_stop_margin_deg": 5.5,
+        "cw_stop_margin_deg": 5.5
+      },
       "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
     },
     "twin-scout-bravo": {
@@ -152,6 +156,10 @@
         "kick_distance_m": 0.07,
         "skip_threshold_m": 0.035
       },
+      "turning": {
+        "ccw_stop_margin_deg": 5.5,
+        "cw_stop_margin_deg": 5.5
+      },
       "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
     },
     "twin-scout-charlie": {
@@ -225,6 +233,10 @@
       "short_move": {
         "kick_distance_m": 0.05,
         "skip_threshold_m": 0.025
+      },
+      "turning": {
+        "ccw_stop_margin_deg": 1.6,
+        "cw_stop_margin_deg": 1.6
       },
       "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
     },
@@ -316,6 +328,10 @@
       "short_move": {
         "kick_distance_m": 0.07,
         "skip_threshold_m": 0.035
+      },
+      "turning": {
+        "ccw_stop_margin_deg": 5.5,
+        "cw_stop_margin_deg": 5.5
       },
       "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
     }

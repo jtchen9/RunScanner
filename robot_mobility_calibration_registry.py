@@ -15,6 +15,8 @@ from typing import Optional
 ROBOT_ROOT = Path(__file__).resolve().parent
 SCANNER_NAME_PATH = ROBOT_ROOT / "scanner_name.txt"
 REGISTRY_PATH = ROBOT_ROOT / "robot_mobility_calibration.json"
+DEFAULT_TURN_STOP_MARGIN_DEG = 5.5
+MAX_ABS_TURN_STOP_MARGIN_DEG = 30.0
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,8 @@ class MobilityCalibrationSnapshot:
     bump_negative_y_gz_bias: Optional[float] = None
     forward_kick_right_speed: int = 40
     forward_kick_left_speed: int = 40
+    turn_ccw_stop_margin_deg: float = DEFAULT_TURN_STOP_MARGIN_DEG
+    turn_cw_stop_margin_deg: float = DEFAULT_TURN_STOP_MARGIN_DEG
 
     def motor_distance(self, desired_distance_m: float) -> float:
         value = self.cmd_a * float(desired_distance_m) + self.cmd_b
@@ -49,7 +53,9 @@ class MobilityCalibrationSnapshot:
             f"calibration_kick_distance_m={self.kick_distance_m:.3f} "
             f"calibration_skip_threshold_m={self.skip_threshold_m:.3f} "
             f"calibration_forward_kick_right_speed={self.forward_kick_right_speed} "
-            f"calibration_forward_kick_left_speed={self.forward_kick_left_speed}"
+            f"calibration_forward_kick_left_speed={self.forward_kick_left_speed} "
+            f"calibration_turn_ccw_stop_margin_deg={self.turn_ccw_stop_margin_deg:.3f} "
+            f"calibration_turn_cw_stop_margin_deg={self.turn_cw_stop_margin_deg:.3f}"
         )
         if self.warning:
             compact_warning = "_".join(self.warning.split())
@@ -208,6 +214,32 @@ def load_mobility_calibration(
             if not (0 <= forward_kick_left_speed <= 100):
                 raise ValueError("left_kick_speed must be between 0 and 100")
 
+        turning = entry.get("turning")
+        turn_ccw_stop_margin_deg = DEFAULT_TURN_STOP_MARGIN_DEG
+        turn_cw_stop_margin_deg = DEFAULT_TURN_STOP_MARGIN_DEG
+        if turning is not None:
+            if not isinstance(turning, dict):
+                raise ValueError("turning must be an object")
+            legacy_margin = turning.get("stop_margin_deg")
+            for field_name, attribute_name in (
+                ("ccw_stop_margin_deg", "turn_ccw_stop_margin_deg"),
+                ("cw_stop_margin_deg", "turn_cw_stop_margin_deg"),
+            ):
+                raw_value = turning.get(field_name, legacy_margin)
+                if raw_value is None:
+                    value = DEFAULT_TURN_STOP_MARGIN_DEG
+                else:
+                    value = _finite_number(raw_value, f"turning.{field_name}")
+                if abs(value) > MAX_ABS_TURN_STOP_MARGIN_DEG:
+                    raise ValueError(
+                        f"turning.{field_name} magnitude must not exceed "
+                        f"{MAX_ABS_TURN_STOP_MARGIN_DEG:.1f} degrees"
+                    )
+                if attribute_name == "turn_ccw_stop_margin_deg":
+                    turn_ccw_stop_margin_deg = value
+                else:
+                    turn_cw_stop_margin_deg = value
+
         return MobilityCalibrationSnapshot(
             scanner=scanner,
             gz_bias=gz_bias,
@@ -223,6 +255,8 @@ def load_mobility_calibration(
             bump_negative_y_gz_bias=bump_negative_y_gz_bias,
             forward_kick_right_speed=forward_kick_right_speed,
             forward_kick_left_speed=forward_kick_left_speed,
+            turn_ccw_stop_margin_deg=turn_ccw_stop_margin_deg,
+            turn_cw_stop_margin_deg=turn_cw_stop_margin_deg,
         )
     except MobilityCalibrationError:
         raise

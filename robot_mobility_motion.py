@@ -82,7 +82,6 @@ TURN_KICK_SPEED = 50
 TURN_CRUISE_SPEED = 40
 TURN_KICK_TIME_SEC = 0.3
 TURN_DT = 0.02
-TURN_STOP_MARGIN_DEG = 5.5
 TURN_TIMEOUT_SEC = 30.0
 TURN_PROGRESS_WINDOW_SEC = 2.0
 TURN_MIN_PROGRESS_DEG = 3.0
@@ -254,6 +253,8 @@ def _run_move(
             bump_negative_y_gz_bias=calibration.bump_negative_y_gz_bias,
             forward_kick_right_speed=calibration.forward_kick_right_speed,
             forward_kick_left_speed=calibration.forward_kick_left_speed,
+            turn_ccw_stop_margin_deg=calibration.turn_ccw_stop_margin_deg,
+            turn_cw_stop_margin_deg=calibration.turn_cw_stop_margin_deg,
         )
 
     ok, m, detail = _motor_begin()
@@ -425,10 +426,18 @@ def _run_turn_measured(
             [(turn_started_at, 0.0)]
         )
 
+        # The low-level left flag is opposite to the public physical direction:
+        # left=False is physical left/CCW; left=True is physical right/CW.
+        stop_margin_deg = (
+            calibration.turn_cw_stop_margin_deg
+            if left
+            else calibration.turn_ccw_stop_margin_deg
+        )
+
         def target_reached() -> bool:
             if left:
-                return yaw_deg <= (target_yaw + TURN_STOP_MARGIN_DEG)
-            return yaw_deg >= (target_yaw - TURN_STOP_MARGIN_DEG)
+                return yaw_deg <= (target_yaw + stop_margin_deg)
+            return yaw_deg >= (target_yaw - stop_margin_deg)
 
         def check_stall(t_now: float) -> Tuple[bool, float, float]:
             directed_progress = -yaw_deg if target_yaw < 0.0 else yaw_deg
