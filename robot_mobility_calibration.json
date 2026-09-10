@@ -22,7 +22,7 @@
           }
         }
       },
-      "calibrated_at_utc": "2026-09-01T06:40:07.915523+00:00",
+      "calibrated_at_utc": "2026-09-10T10:38:47.322107+00:00",
       "distance_model": {
         "actual_a": 0.8759748172217708,
         "actual_b": 0.07116165718927703,
@@ -69,7 +69,11 @@
           "manual_startup_heading_accepted": true,
           "status": "pass"
         },
-        "status": "pass"
+        "status": "pass",
+        "turn_stop_margin": {
+          "manual_ccw_and_cw_ten_turn_measurements_accepted": true,
+          "status": "pass"
+        }
       },
       "short_move": {
         "kick_distance_m": 0.065,
@@ -77,8 +81,8 @@
       },
       "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv",
       "turning": {
-        "ccw_stop_margin_deg": 5.5,
-        "cw_stop_margin_deg": 5.5
+        "ccw_stop_margin_deg": 4.2,
+        "cw_stop_margin_deg": 3.4
       }
     },
     "twin-scout-bravo": {
