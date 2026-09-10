@@ -75,11 +75,11 @@
         "kick_distance_m": 0.065,
         "skip_threshold_m": 0.0325
       },
+      "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv",
       "turning": {
         "ccw_stop_margin_deg": 5.5,
         "cw_stop_margin_deg": 5.5
-      },
-      "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
+      }
     },
     "twin-scout-bravo": {
       "buck_voltage_v": 9.0,
@@ -156,11 +156,11 @@
         "kick_distance_m": 0.07,
         "skip_threshold_m": 0.035
       },
+      "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv",
       "turning": {
         "ccw_stop_margin_deg": 5.5,
         "cw_stop_margin_deg": 5.5
-      },
-      "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
+      }
     },
     "twin-scout-charlie": {
       "buck_voltage_v": 9.0,
@@ -174,7 +174,7 @@
           "gz_bias": -2.0
         }
       },
-      "calibrated_at_utc": "2026-09-01T05:59:25.515216+00:00",
+      "calibrated_at_utc": "2026-09-10T06:55:16.818216+00:00",
       "distance_model": {
         "actual_a": 0.8599309504467912,
         "actual_b": 0.06745938261575957,
@@ -228,17 +228,21 @@
           "gz_bias": "calibrated",
           "move_startup": "calibrated"
         },
-        "status": "pass"
+        "status": "pass",
+        "turn_stop_margin": {
+          "manual_ccw_and_cw_ten_turn_measurements_accepted": true,
+          "status": "pass"
+        }
       },
       "short_move": {
         "kick_distance_m": 0.05,
         "skip_threshold_m": 0.025
       },
+      "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv",
       "turning": {
         "ccw_stop_margin_deg": 1.6,
         "cw_stop_margin_deg": 1.6
-      },
-      "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
+      }
     },
     "twin-scout-delta": {
       "buck_voltage_v": 9.0,
@@ -329,11 +333,11 @@
         "kick_distance_m": 0.07,
         "skip_threshold_m": 0.035
       },
+      "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv",
       "turning": {
         "ccw_stop_margin_deg": 5.5,
         "cw_stop_margin_deg": 5.5
-      },
-      "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv"
+      }
     }
   },
   "schema_version": 1
