@@ -40,8 +40,14 @@ def dispatch(
     action = (cmd_fields.get("action") or "").strip()
     args = parse_args_json(cmd_fields.get("args_json") or "")
 
-    if category and category not in ("scan", "av", "voice", "mobility"):
+    if category and category not in ("scan", "av", "voice", "mobility", "health"):
         return "error", f"unsupported category={category}"
+
+    if category == "health":
+        if action == "health.check.cameras":
+            from robot_health_check import check_cameras
+            return check_cameras(args)
+        return "error", f"unknown health action: {action}"
 
     # =====================
     # scan
