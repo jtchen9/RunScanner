@@ -52,8 +52,8 @@ BUS = 1
 # Forward/backward calibration placeholders
 # Replace after your real calibration
 # =========================================================
-MOVE_KICK_SPEED = 40
-MOVE_CRUISE_SPEED = 25
+MOVE_KICK_SPEED = 50
+MOVE_CRUISE_SPEED = 47
 MOVE_BUMP_CROSSING_CRUISE_SPEED = 50
 MOVE_KICK_TIME_SEC = 0.35
 
