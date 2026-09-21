@@ -53,7 +53,7 @@ BUS = 1
 # Replace after your real calibration
 # =========================================================
 MOVE_KICK_SPEED = 50
-MOVE_CRUISE_SPEED = 47
+MOVE_CRUISE_SPEED = 40
 MOVE_BUMP_CROSSING_CRUISE_SPEED = 50
 MOVE_KICK_TIME_SEC = 0.35
 
