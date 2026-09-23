@@ -616,7 +616,7 @@ register_status = read_register_status()
 root = tk.Tk()
 root.geometry("740x410")
 root.resizable(False, False)
-root.title("Wi-Fi Digital Twins")
+root.title("Wi-Fi OWM")
 
 # ---- Make grid cells uniform ----
 for c in range(4):   # 4 columns
