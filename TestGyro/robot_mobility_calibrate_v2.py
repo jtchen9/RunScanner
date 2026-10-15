@@ -45,7 +45,7 @@ DEFAULT_BUMP_RIGHT_SPEED = 40
 DEFAULT_BUMP_LEFT_SPEED = 39
 DEFAULT_TURN_SPEED = 30
 DEFAULT_FORWARD_TRIAL_SEC = 9.0
-DEFAULT_BUMP_TRIAL_SEC = 18.0
+DEFAULT_BUMP_TRIAL_SEC = 12.0
 DEFAULT_MINIMUM_DISTANCE_M = 0.10
 DEFAULT_HEADING_KP = 0.30
 DEFAULT_HEADING_DEADBAND_DEG = 2.0
@@ -421,7 +421,10 @@ def _bump_trial(
         f"Bump right/left PWM: {int(settings['right_speed'])}/"
         f"{int(settings['left_speed'])}"
     )
-    input(f"Place Alpha for {label} and press Enter for an 18-second trial: ")
+    input(
+        f"Place Alpha for {label} and press Enter for a "
+        f"{DEFAULT_BUMP_TRIAL_SEC:g}-second trial: "
+    )
     _run_forward_for_seconds(calibration, DEFAULT_BUMP_TRIAL_SEC, profile)
     if not _yes_no("Did Alpha clear the ramp without a stall?", default_yes=True):
         raise RuntimeError(
