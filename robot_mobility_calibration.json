@@ -2,10 +2,39 @@
   "robots": {
     "twin-scout-alpha": {
       "buck_voltage_v": 9.0,
+      "drivetrain": {
+        "model": "balanced_timed_v2",
+        "forward": {
+          "right_speed": 30,
+          "left_speed": 29,
+          "seconds_per_meter": 9.02,
+          "minimum_distance_m": 0.1
+        },
+        "heading_hold": {
+          "kp": 0.3,
+          "deadband_deg": 2.0,
+          "max_correction": 2.0
+        },
+        "turning": {
+          "speed": 30,
+          "ccw_stop_margin_deg": 3.25,
+          "cw_stop_margin_deg": 3.4
+        },
+        "bump_crossing": {
+          "positive_y": {
+            "distance_m": 2.0,
+            "seconds_per_meter": 9.58
+          },
+          "negative_y": {
+            "distance_m": 2.0,
+            "seconds_per_meter": 9.4
+          }
+        }
+      },
       "bump_crossing": {
         "negative_y": {
-          "command_distance_m": 0.68,
-          "gz_bias": 0.47,
+          "command_distance_m": 2.0,
+          "gz_bias": 0.429066637,
           "start": {
             "heading_deg": 270.0,
             "x": 9.06,
@@ -13,8 +42,8 @@
           }
         },
         "positive_y": {
-          "command_distance_m": 0.68,
-          "gz_bias": 0.47,
+          "command_distance_m": 2.0,
+          "gz_bias": 0.429066637,
           "start": {
             "heading_deg": 90.0,
             "x": 9.06,
@@ -29,7 +58,7 @@
         "cmd_a": 1.1415853290983702,
         "cmd_b": -0.08123710384160622
       },
-      "gz_bias": 0.47,
+      "gz_bias": 0.429066637,
       "move_startup": {
         "forward": {
           "left_kick_speed": 40,
@@ -81,7 +110,7 @@
       },
       "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv",
       "turning": {
-        "ccw_stop_margin_deg": 4.2,
+        "ccw_stop_margin_deg": 3.25,
         "cw_stop_margin_deg": 3.4
       }
     },

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import time
 from collections import deque
+from dataclasses import replace
 from typing import Deque, NamedTuple, Optional, Tuple
 
 from TestGyro.DFRobot_RaspberryPi_DC_Motor import DFRobot_DC_Motor_IIC
@@ -229,7 +230,6 @@ def _run_move(
     if not ok_profile:
         return False, profile_detail
 
-    cruise_speed = _move_cruise_speed_for_profile(profile)
     calibration = calibration or _production_calibration_snapshot()
     effective_gz_bias = (
         float(calibration_gz_bias)
@@ -237,36 +237,57 @@ def _run_move(
         else calibration.move_gz_bias(profile)
     )
     if effective_gz_bias != calibration.gz_bias or motor_distance_override is not None:
-        calibration = MobilityCalibrationSnapshot(
-            scanner=calibration.scanner,
+        calibration = replace(
+            calibration,
             gz_bias=effective_gz_bias,
-            cmd_a=calibration.cmd_a,
-            cmd_b=calibration.cmd_b,
             source="calibration_override",
-            kick_distance_m=calibration.kick_distance_m,
-            skip_threshold_m=calibration.skip_threshold_m,
-            calibrated_at_utc=calibration.calibrated_at_utc,
-            warning=calibration.warning,
-            bump_positive_y_distance_m=calibration.bump_positive_y_distance_m,
-            bump_negative_y_distance_m=calibration.bump_negative_y_distance_m,
-            bump_positive_y_gz_bias=calibration.bump_positive_y_gz_bias,
-            bump_negative_y_gz_bias=calibration.bump_negative_y_gz_bias,
-            forward_kick_right_speed=calibration.forward_kick_right_speed,
-            forward_kick_left_speed=calibration.forward_kick_left_speed,
-            turn_ccw_stop_margin_deg=calibration.turn_ccw_stop_margin_deg,
-            turn_cw_stop_margin_deg=calibration.turn_cw_stop_margin_deg,
+        )
+
+    if (
+        calibration.uses_balanced_timed_v2
+        and distance_m < float(calibration.minimum_move_distance_m or 0.0)
+    ):
+        return True, (
+            "move_skipped "
+            f"distance_m={distance_m:.3f} "
+            f"minimum_distance_m={calibration.minimum_move_distance_m:.3f} "
+            f"{calibration.detail()}"
         )
 
     ok, m, detail = _motor_begin()
     if not ok:
         return False, detail
 
-    motor_distance_m = (
-        calibration.motor_distance(distance_m)
-        if motor_distance_override is None
-        else max(0.0, float(motor_distance_override))
-    )
-    cruise_time = motor_distance_m * MOVE_SEC_PER_METER
+    if calibration.uses_balanced_timed_v2:
+        right_cruise_speed, left_cruise_speed = calibration.move_speeds(profile)
+        motor_distance_m = (
+            distance_m
+            if motor_distance_override is None
+            else max(0.0, float(motor_distance_override))
+        )
+        cruise_time = motor_distance_m * calibration.move_seconds_per_meter(profile)
+        kick_time_sec = 0.0
+        heading_hold_kp = float(calibration.heading_hold_kp or 0.0)
+        heading_hold_deadband_deg = float(
+            calibration.heading_hold_deadband_deg or 0.0
+        )
+        heading_hold_max_correction = float(
+            calibration.heading_hold_max_correction or 0.0
+        )
+    else:
+        cruise_speed = _move_cruise_speed_for_profile(profile)
+        right_cruise_speed = cruise_speed
+        left_cruise_speed = cruise_speed
+        motor_distance_m = (
+            calibration.motor_distance(distance_m)
+            if motor_distance_override is None
+            else max(0.0, float(motor_distance_override))
+        )
+        cruise_time = motor_distance_m * MOVE_SEC_PER_METER
+        kick_time_sec = MOVE_KICK_TIME_SEC
+        heading_hold_kp = HEADING_HOLD_KP
+        heading_hold_deadband_deg = HEADING_HOLD_DEADBAND_DEG
+        heading_hold_max_correction = HEADING_HOLD_MAX_CORRECTION
 
     yaw_deg = 0.0
     max_abs_yaw_deg = 0.0
@@ -297,13 +318,13 @@ def _run_move(
             max_abs_yaw_deg = max(max_abs_yaw_deg, abs(yaw_deg))
 
             err = yaw_deg
-            if abs(err) < HEADING_HOLD_DEADBAND_DEG:
+            if abs(err) < heading_hold_deadband_deg:
                 corr = 0.0
             else:
-                corr = HEADING_HOLD_KP * err
+                corr = heading_hold_kp * err
                 corr = max(
-                    -HEADING_HOLD_MAX_CORRECTION,
-                    min(HEADING_HOLD_MAX_CORRECTION, corr),
+                    -heading_hold_max_correction,
+                    min(heading_hold_max_correction, corr),
                 )
 
             # Positive yaw = robot turned right.
@@ -321,8 +342,8 @@ def _run_move(
             t_prev = time.time()
             elapsed = 0.0
 
-            while elapsed < MOVE_KICK_TIME_SEC:
-                step = min(MOVE_DT_SEC, MOVE_KICK_TIME_SEC - elapsed)
+            while elapsed < kick_time_sec:
+                step = min(MOVE_DT_SEC, kick_time_sec - elapsed)
                 t_now = time.time()
                 dt = t_now - t_prev
                 t_prev = t_now
@@ -337,9 +358,10 @@ def _run_move(
                 elapsed += step
 
         else:
-            m.motor_movement([m.M1], m.CW,  MOVE_KICK_SPEED)
-            m.motor_movement([m.M2], m.CCW, MOVE_KICK_SPEED)
-            _sleep_checked(MOVE_KICK_TIME_SEC)
+            if kick_time_sec > 0.0:
+                m.motor_movement([m.M1], m.CW,  MOVE_KICK_SPEED)
+                m.motor_movement([m.M2], m.CCW, MOVE_KICK_SPEED)
+                _sleep_checked(kick_time_sec)
 
         # -------------------------------------------------
         # Cruise phase
@@ -354,14 +376,18 @@ def _run_move(
                 dt = t_now - t_prev
                 t_prev = t_now
 
-                apply_forward_heading_hold(cruise_speed, cruise_speed, dt)
+                apply_forward_heading_hold(
+                    right_cruise_speed,
+                    left_cruise_speed,
+                    dt,
+                )
 
                 time.sleep(step)
                 elapsed += step
 
         else:
-            m.motor_movement([m.M1], m.CW,  cruise_speed)
-            m.motor_movement([m.M2], m.CCW, cruise_speed)
+            m.motor_movement([m.M1], m.CW,  right_cruise_speed)
+            m.motor_movement([m.M2], m.CCW, left_cruise_speed)
             _sleep_checked(cruise_time)
 
         direction = "forward" if forward else "backward"
@@ -369,13 +395,15 @@ def _run_move(
             f"{direction}_done "
             f"distance_m={distance_m:.3f} "
             f"motor_distance_m={motor_distance_m:.3f} "
-            f"kick_time={MOVE_KICK_TIME_SEC:.3f} "
+            f"kick_time={kick_time_sec:.3f} "
             f"forward_kick_right_speed={calibration.forward_kick_right_speed} "
             f"forward_kick_left_speed={calibration.forward_kick_left_speed} "
             f"cruise_time={cruise_time:.3f} "
             f"move_profile={profile} "
             f"move_gz_bias={calibration.gz_bias:.9f} "
-            f"cruise_speed={cruise_speed} "
+            f"cruise_speed={right_cruise_speed} "
+            f"right_cruise_speed={right_cruise_speed} "
+            f"left_cruise_speed={left_cruise_speed} "
             f"heading_hold_enabled={HEADING_HOLD_ENABLED} "
             f"final_yaw_deg={yaw_deg:.3f} "
             f"max_abs_yaw_deg={max_abs_yaw_deg:.3f} "
@@ -401,6 +429,15 @@ def _run_turn_measured(
         return _TurnExecution(False, f"BAD_COMMAND_ARGS angle_deg={angle_deg}", 0.0)
 
     calibration = calibration or _production_calibration_snapshot()
+    if calibration.uses_balanced_timed_v2:
+        assert calibration.turn_speed is not None
+        turn_kick_speed = calibration.turn_speed
+        turn_cruise_speed = calibration.turn_speed
+        turn_kick_time_sec = 0.0
+    else:
+        turn_kick_speed = TURN_KICK_SPEED
+        turn_cruise_speed = TURN_CRUISE_SPEED
+        turn_kick_time_sec = TURN_KICK_TIME_SEC
 
     ok_m, m, detail_m = _motor_begin()
     if not ok_m:
@@ -479,67 +516,69 @@ def _run_turn_measured(
                 )
             return f"{detail} {calibration.detail()}"
 
-        # kick phase
-        if left:
-            m.motor_movement([m.M1], m.CCW, TURN_KICK_SPEED)   # right forward
-            m.motor_movement([m.M2], m.CCW, TURN_KICK_SPEED)   # left backward
-        else:
-            m.motor_movement([m.M1], m.CW, TURN_KICK_SPEED)    # right backward
-            m.motor_movement([m.M2], m.CW, TURN_KICK_SPEED)    # left forward
+        # Legacy drivetrains retain their stronger fixed kick.  The balanced
+        # timed drivetrain starts directly at its calibrated turn speed.
+        if turn_kick_time_sec > 0.0:
+            if left:
+                m.motor_movement([m.M1], m.CCW, turn_kick_speed)
+                m.motor_movement([m.M2], m.CCW, turn_kick_speed)
+            else:
+                m.motor_movement([m.M1], m.CW, turn_kick_speed)
+                m.motor_movement([m.M2], m.CW, turn_kick_speed)
 
-        t_kick_start = turn_started_at
-        while True:
-            t_now = time.monotonic()
-            dt = t_now - t_prev
-            t_prev = t_now
+            t_kick_start = turn_started_at
+            while True:
+                t_now = time.monotonic()
+                dt = t_now - t_prev
+                t_prev = t_now
 
-            yaw_rate = _read_yaw_rate(imu, calibration.gz_bias)
-            yaw_deg += yaw_rate * dt
+                yaw_rate = _read_yaw_rate(imu, calibration.gz_bias)
+                yaw_deg += yaw_rate * dt
 
-            elapsed_sec = t_now - turn_started_at
-            if target_reached():
-                direction = "turn_left" if left else "turn_right"
-                return _TurnExecution(
-                    True,
-                    (
-                        f"{direction}_done angle_deg={angle_deg:.3f} "
-                        f"measured_yaw_deg={yaw_deg:.3f} "
-                        f"{calibration.detail()}"
-                    ),
-                    yaw_deg,
-                )
-            if elapsed_sec >= TURN_TIMEOUT_SEC:
-                return _TurnExecution(
-                    False,
-                    fail_detail("TURN_TIMEOUT", "kick", elapsed_sec),
-                    yaw_deg,
-                )
-            is_stalled, window_progress, window_sec = check_stall(t_now)
-            if is_stalled:
-                return _TurnExecution(
-                    False,
-                    fail_detail(
-                        "TURN_STALL",
-                        "kick",
-                        elapsed_sec,
-                        window_progress,
-                        window_sec,
-                    ),
-                    yaw_deg,
-                )
+                elapsed_sec = t_now - turn_started_at
+                if target_reached():
+                    direction = "turn_left" if left else "turn_right"
+                    return _TurnExecution(
+                        True,
+                        (
+                            f"{direction}_done angle_deg={angle_deg:.3f} "
+                            f"measured_yaw_deg={yaw_deg:.3f} "
+                            f"{calibration.detail()}"
+                        ),
+                        yaw_deg,
+                    )
+                if elapsed_sec >= TURN_TIMEOUT_SEC:
+                    return _TurnExecution(
+                        False,
+                        fail_detail("TURN_TIMEOUT", "kick", elapsed_sec),
+                        yaw_deg,
+                    )
+                is_stalled, window_progress, window_sec = check_stall(t_now)
+                if is_stalled:
+                    return _TurnExecution(
+                        False,
+                        fail_detail(
+                            "TURN_STALL",
+                            "kick",
+                            elapsed_sec,
+                            window_progress,
+                            window_sec,
+                        ),
+                        yaw_deg,
+                    )
 
-            if (t_now - t_kick_start) >= TURN_KICK_TIME_SEC:
-                break
+                if (t_now - t_kick_start) >= turn_kick_time_sec:
+                    break
 
-            time.sleep(TURN_DT)
+                time.sleep(TURN_DT)
 
         # cruise phase
         if left:
-            m.motor_movement([m.M1], m.CCW, TURN_CRUISE_SPEED)
-            m.motor_movement([m.M2], m.CCW, TURN_CRUISE_SPEED)
+            m.motor_movement([m.M1], m.CCW, turn_cruise_speed)
+            m.motor_movement([m.M2], m.CCW, turn_cruise_speed)
         else:
-            m.motor_movement([m.M1], m.CW, TURN_CRUISE_SPEED)
-            m.motor_movement([m.M2], m.CW, TURN_CRUISE_SPEED)
+            m.motor_movement([m.M1], m.CW, turn_cruise_speed)
+            m.motor_movement([m.M2], m.CW, turn_cruise_speed)
 
         while True:
             t_now = time.monotonic()

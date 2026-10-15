@@ -17,6 +17,7 @@ SCANNER_NAME_PATH = ROBOT_ROOT / "scanner_name.txt"
 REGISTRY_PATH = ROBOT_ROOT / "robot_mobility_calibration.json"
 DEFAULT_TURN_STOP_MARGIN_DEG = 5.5
 MAX_ABS_TURN_STOP_MARGIN_DEG = 30.0
+DRIVETRAIN_MODEL_BALANCED_TIMED_V2 = "balanced_timed_v2"
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,21 @@ class MobilityCalibrationSnapshot:
     forward_kick_left_speed: int = 40
     turn_ccw_stop_margin_deg: float = DEFAULT_TURN_STOP_MARGIN_DEG
     turn_cw_stop_margin_deg: float = DEFAULT_TURN_STOP_MARGIN_DEG
+    drivetrain_model: str = "legacy"
+    forward_right_speed: Optional[int] = None
+    forward_left_speed: Optional[int] = None
+    forward_seconds_per_meter: Optional[float] = None
+    minimum_move_distance_m: Optional[float] = None
+    heading_hold_kp: Optional[float] = None
+    heading_hold_deadband_deg: Optional[float] = None
+    heading_hold_max_correction: Optional[float] = None
+    turn_speed: Optional[int] = None
+    bump_positive_y_seconds_per_meter: Optional[float] = None
+    bump_negative_y_seconds_per_meter: Optional[float] = None
+
+    @property
+    def uses_balanced_timed_v2(self) -> bool:
+        return self.drivetrain_model == DRIVETRAIN_MODEL_BALANCED_TIMED_V2
 
     def motor_distance(self, desired_distance_m: float) -> float:
         value = self.cmd_a * float(desired_distance_m) + self.cmd_b
@@ -60,7 +76,38 @@ class MobilityCalibrationSnapshot:
         if self.warning:
             compact_warning = "_".join(self.warning.split())
             detail += f" calibration_warning={compact_warning}"
+        if self.uses_balanced_timed_v2:
+            detail += (
+                f" calibration_drivetrain_model={self.drivetrain_model}"
+                f" calibration_forward_right_speed={self.forward_right_speed}"
+                f" calibration_forward_left_speed={self.forward_left_speed}"
+                f" calibration_forward_seconds_per_meter="
+                f"{self.forward_seconds_per_meter:.6f}"
+                f" calibration_turn_speed={self.turn_speed}"
+            )
         return detail
+
+    def move_speeds(self, move_profile: str) -> tuple[int, int]:
+        if not self.uses_balanced_timed_v2:
+            raise MobilityCalibrationError("legacy calibration has no v2 move speeds")
+        assert self.forward_right_speed is not None
+        assert self.forward_left_speed is not None
+        return self.forward_right_speed, self.forward_left_speed
+
+    def move_seconds_per_meter(self, move_profile: str) -> float:
+        if not self.uses_balanced_timed_v2:
+            raise MobilityCalibrationError("legacy calibration has no v2 timing model")
+        if move_profile == "bump_crossing_up":
+            value = self.bump_positive_y_seconds_per_meter
+        elif move_profile == "bump_crossing_down":
+            value = self.bump_negative_y_seconds_per_meter
+        else:
+            value = self.forward_seconds_per_meter
+        if value is None:
+            raise MobilityCalibrationError(
+                f"v2 seconds-per-meter calibration is missing for {move_profile}"
+            )
+        return value
 
     def bump_crossing_distance(self, direction: str) -> float:
         values = {
@@ -240,6 +287,127 @@ def load_mobility_calibration(
                 else:
                     turn_cw_stop_margin_deg = value
 
+        drivetrain_model = "legacy"
+        forward_right_speed: Optional[int] = None
+        forward_left_speed: Optional[int] = None
+        forward_seconds_per_meter: Optional[float] = None
+        minimum_move_distance_m: Optional[float] = None
+        heading_hold_kp: Optional[float] = None
+        heading_hold_deadband_deg: Optional[float] = None
+        heading_hold_max_correction: Optional[float] = None
+        turn_speed: Optional[int] = None
+        bump_positive_y_seconds_per_meter: Optional[float] = None
+        bump_negative_y_seconds_per_meter: Optional[float] = None
+
+        drivetrain = entry.get("drivetrain")
+        if drivetrain is not None:
+            if not isinstance(drivetrain, dict):
+                raise ValueError("drivetrain must be an object")
+            drivetrain_model = str(drivetrain.get("model") or "").strip()
+            if drivetrain_model != DRIVETRAIN_MODEL_BALANCED_TIMED_V2:
+                raise ValueError(f"unsupported drivetrain model: {drivetrain_model}")
+
+            forward = drivetrain.get("forward")
+            heading_hold = drivetrain.get("heading_hold")
+            v2_turning = drivetrain.get("turning")
+            v2_bump = drivetrain.get("bump_crossing")
+            if not isinstance(forward, dict):
+                raise ValueError("drivetrain.forward must be an object")
+            if not isinstance(heading_hold, dict):
+                raise ValueError("drivetrain.heading_hold must be an object")
+            if not isinstance(v2_turning, dict):
+                raise ValueError("drivetrain.turning must be an object")
+            if not isinstance(v2_bump, dict):
+                raise ValueError("drivetrain.bump_crossing must be an object")
+
+            def v2_speed(value: object, name: str) -> int:
+                number = _finite_number(value, name)
+                if not number.is_integer() or not 1 <= number <= 100:
+                    raise ValueError(f"{name} must be an integer from 1 through 100")
+                return int(number)
+
+            def v2_positive(value: object, name: str) -> float:
+                number = _finite_number(value, name)
+                if number <= 0.0:
+                    raise ValueError(f"{name} must be positive")
+                return number
+
+            forward_right_speed = v2_speed(
+                forward.get("right_speed"), "drivetrain.forward.right_speed"
+            )
+            forward_left_speed = v2_speed(
+                forward.get("left_speed"), "drivetrain.forward.left_speed"
+            )
+            forward_seconds_per_meter = v2_positive(
+                forward.get("seconds_per_meter"),
+                "drivetrain.forward.seconds_per_meter",
+            )
+            minimum_move_distance_m = v2_positive(
+                forward.get("minimum_distance_m"),
+                "drivetrain.forward.minimum_distance_m",
+            )
+            if minimum_move_distance_m > 1.0:
+                raise ValueError("drivetrain.forward.minimum_distance_m is too large")
+
+            heading_hold_kp = _finite_number(
+                heading_hold.get("kp"), "drivetrain.heading_hold.kp"
+            )
+            heading_hold_deadband_deg = _finite_number(
+                heading_hold.get("deadband_deg"),
+                "drivetrain.heading_hold.deadband_deg",
+            )
+            heading_hold_max_correction = _finite_number(
+                heading_hold.get("max_correction"),
+                "drivetrain.heading_hold.max_correction",
+            )
+            if heading_hold_kp < 0.0:
+                raise ValueError("drivetrain.heading_hold.kp must not be negative")
+            if heading_hold_deadband_deg < 0.0:
+                raise ValueError(
+                    "drivetrain.heading_hold.deadband_deg must not be negative"
+                )
+            if not 0.0 <= heading_hold_max_correction <= 20.0:
+                raise ValueError(
+                    "drivetrain.heading_hold.max_correction must be from 0 through 20"
+                )
+
+            turn_speed = v2_speed(
+                v2_turning.get("speed"), "drivetrain.turning.speed"
+            )
+            turn_ccw_stop_margin_deg = _finite_number(
+                v2_turning.get("ccw_stop_margin_deg"),
+                "drivetrain.turning.ccw_stop_margin_deg",
+            )
+            turn_cw_stop_margin_deg = _finite_number(
+                v2_turning.get("cw_stop_margin_deg"),
+                "drivetrain.turning.cw_stop_margin_deg",
+            )
+            if max(abs(turn_ccw_stop_margin_deg), abs(turn_cw_stop_margin_deg)) > MAX_ABS_TURN_STOP_MARGIN_DEG:
+                raise ValueError("drivetrain turning margin magnitude is too large")
+
+            positive_y = v2_bump.get("positive_y")
+            negative_y = v2_bump.get("negative_y")
+            if not isinstance(positive_y, dict) or not isinstance(negative_y, dict):
+                raise ValueError(
+                    "drivetrain.bump_crossing must contain positive_y and negative_y"
+                )
+            bump_positive_y_distance_m = v2_positive(
+                positive_y.get("distance_m"),
+                "drivetrain.bump_crossing.positive_y.distance_m",
+            )
+            bump_negative_y_distance_m = v2_positive(
+                negative_y.get("distance_m"),
+                "drivetrain.bump_crossing.negative_y.distance_m",
+            )
+            bump_positive_y_seconds_per_meter = v2_positive(
+                positive_y.get("seconds_per_meter"),
+                "drivetrain.bump_crossing.positive_y.seconds_per_meter",
+            )
+            bump_negative_y_seconds_per_meter = v2_positive(
+                negative_y.get("seconds_per_meter"),
+                "drivetrain.bump_crossing.negative_y.seconds_per_meter",
+            )
+
         return MobilityCalibrationSnapshot(
             scanner=scanner,
             gz_bias=gz_bias,
@@ -257,6 +425,17 @@ def load_mobility_calibration(
             forward_kick_left_speed=forward_kick_left_speed,
             turn_ccw_stop_margin_deg=turn_ccw_stop_margin_deg,
             turn_cw_stop_margin_deg=turn_cw_stop_margin_deg,
+            drivetrain_model=drivetrain_model,
+            forward_right_speed=forward_right_speed,
+            forward_left_speed=forward_left_speed,
+            forward_seconds_per_meter=forward_seconds_per_meter,
+            minimum_move_distance_m=minimum_move_distance_m,
+            heading_hold_kp=heading_hold_kp,
+            heading_hold_deadband_deg=heading_hold_deadband_deg,
+            heading_hold_max_correction=heading_hold_max_correction,
+            turn_speed=turn_speed,
+            bump_positive_y_seconds_per_meter=bump_positive_y_seconds_per_meter,
+            bump_negative_y_seconds_per_meter=bump_negative_y_seconds_per_meter,
         )
     except MobilityCalibrationError:
         raise

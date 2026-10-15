@@ -1752,6 +1752,16 @@ def _run_session(scanner: str) -> str:
     _archive_active_csv(scanner)
     registry = _load_registry()
     previous = _previous_entry(registry, scanner)
+    if isinstance(previous, dict):
+        drivetrain = previous.get("drivetrain")
+        if (
+            isinstance(drivetrain, dict)
+            and drivetrain.get("model") == "balanced_timed_v2"
+        ):
+            raise RuntimeError(
+                "this robot uses balanced_timed_v2; run "
+                "robot_mobility_calibrate_v2.py instead"
+            )
     print("============================================================")
     print(f"Mobility calibration: {scanner}")
     if previous is None:
