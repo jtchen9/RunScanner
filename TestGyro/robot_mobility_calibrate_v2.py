@@ -41,6 +41,8 @@ RESULT_PATH = SCRIPT_DIR / "calibration" / "drivetrain_v2_result.json"
 
 DEFAULT_RIGHT_SPEED = 30
 DEFAULT_LEFT_SPEED = 29
+DEFAULT_BUMP_RIGHT_SPEED = 40
+DEFAULT_BUMP_LEFT_SPEED = 39
 DEFAULT_TURN_SPEED = 30
 DEFAULT_FORWARD_TRIAL_SEC = 9.0
 DEFAULT_BUMP_TRIAL_SEC = 18.0
@@ -121,6 +123,10 @@ def _candidate(
     cw_margin: float,
     positive_y_seconds_per_meter: float,
     negative_y_seconds_per_meter: float,
+    positive_y_right_speed: int = DEFAULT_BUMP_RIGHT_SPEED,
+    positive_y_left_speed: int = DEFAULT_BUMP_LEFT_SPEED,
+    negative_y_right_speed: int = DEFAULT_BUMP_RIGHT_SPEED,
+    negative_y_left_speed: int = DEFAULT_BUMP_LEFT_SPEED,
 ) -> MobilityCalibrationSnapshot:
     return replace(
         production,
@@ -142,6 +148,10 @@ def _candidate(
         bump_negative_y_distance_m=BUMP_TARGET_DISTANCE_M,
         bump_positive_y_seconds_per_meter=positive_y_seconds_per_meter,
         bump_negative_y_seconds_per_meter=negative_y_seconds_per_meter,
+        bump_positive_y_right_speed=positive_y_right_speed,
+        bump_positive_y_left_speed=positive_y_left_speed,
+        bump_negative_y_right_speed=negative_y_right_speed,
+        bump_negative_y_left_speed=negative_y_left_speed,
         bump_positive_y_gz_bias=None,
         bump_negative_y_gz_bias=None,
     )
@@ -367,11 +377,9 @@ def _calibrate_turning(
     }
 
 
-def _calibrate_bump_direction(
+def _bump_candidate(
     production: MobilityCalibrationSnapshot,
     *,
-    direction: str,
-    profile: str,
     gz_bias: float,
     right_speed: int,
     left_speed: int,
@@ -379,10 +387,10 @@ def _calibrate_bump_direction(
     turn_speed: int,
     ccw_margin: float,
     cw_margin: float,
-) -> Dict[str, float]:
-    label = "+Y inner-to-outer" if direction == "positive_y" else "-Y outer-to-inner"
-    print(f"\nBump direction: {label}")
-    candidate = _candidate(
+    positive_y: Dict[str, float],
+    negative_y: Dict[str, float],
+) -> MobilityCalibrationSnapshot:
+    return _candidate(
         production,
         gz_bias=gz_bias,
         right_speed=right_speed,
@@ -391,37 +399,68 @@ def _calibrate_bump_direction(
         turn_speed=turn_speed,
         ccw_margin=ccw_margin,
         cw_margin=cw_margin,
-        positive_y_seconds_per_meter=9.0,
-        negative_y_seconds_per_meter=9.0,
+        positive_y_seconds_per_meter=positive_y["seconds_per_meter"],
+        negative_y_seconds_per_meter=negative_y["seconds_per_meter"],
+        positive_y_right_speed=int(positive_y["right_speed"]),
+        positive_y_left_speed=int(positive_y["left_speed"]),
+        negative_y_right_speed=int(negative_y["right_speed"]),
+        negative_y_left_speed=int(negative_y["left_speed"]),
+    )
+
+
+def _bump_trial(
+    calibration: MobilityCalibrationSnapshot,
+    *,
+    direction: str,
+    profile: str,
+    settings: Dict[str, float],
+) -> None:
+    label = "+Y inner-to-outer" if direction == "positive_y" else "-Y outer-to-inner"
+    print(f"\nBump timing trial: {label}")
+    print(
+        f"Bump right/left PWM: {int(settings['right_speed'])}/"
+        f"{int(settings['left_speed'])}"
     )
     input(f"Place Alpha for {label} and press Enter for an 18-second trial: ")
-    _run_forward_for_seconds(candidate, DEFAULT_BUMP_TRIAL_SEC, profile)
+    _run_forward_for_seconds(calibration, DEFAULT_BUMP_TRIAL_SEC, profile)
+    if not _yes_no("Did Alpha clear the ramp without a stall?", default_yes=True):
+        raise RuntimeError(
+            f"{direction} bump trial stalled; timing was not calculated"
+        )
     measured_cm = _prompt_float("Measured forward distance (cm)", 190.0, 20.0, 400.0)
     rate = DEFAULT_BUMP_TRIAL_SEC / (measured_cm / 100.0)
-    if direction == "positive_y":
-        candidate = replace(candidate, bump_positive_y_seconds_per_meter=rate)
-    else:
-        candidate = replace(candidate, bump_negative_y_seconds_per_meter=rate)
+    settings["trial_distance_m"] = measured_cm / 100.0
+    settings["seconds_per_meter"] = rate
     print(f"Candidate bump timing: {rate:.6f} s/m")
-    input(f"Reset for {label} and press Enter for the calibrated 2.0-m verification: ")
+
+
+def _bump_verification(
+    calibration: MobilityCalibrationSnapshot,
+    *,
+    direction: str,
+    profile: str,
+    settings: Dict[str, float],
+) -> None:
+    label = "+Y inner-to-outer" if direction == "positive_y" else "-Y outer-to-inner"
+    print(f"\nBump verification: {label}")
+    input(f"Place Alpha for {label} and press Enter for the calibrated 2.0-m verification: ")
     ok, detail = motion._run_move(
         forward=True,
         distance_m=BUMP_TARGET_DISTANCE_M,
         move_profile=profile,
-        calibration=candidate,
+        calibration=calibration,
     )
     print(detail)
     if not ok:
         raise RuntimeError(detail)
+    if not _yes_no("Did Alpha clear the ramp without a stall?", default_yes=True):
+        raise RuntimeError(
+            f"{direction} bump verification stalled; calibration was rejected"
+        )
     verify_cm = _prompt_float("Measured verification distance (cm)", 200.0, 20.0, 400.0)
     if not _yes_no(f"Accept {label} bump timing?", default_yes=True):
         raise RuntimeError(f"{direction} bump timing was not accepted")
-    return {
-        "distance_m": BUMP_TARGET_DISTANCE_M,
-        "seconds_per_meter": rate,
-        "trial_distance_m": measured_cm / 100.0,
-        "verification_distance_m": verify_cm / 100.0,
-    }
+    settings["verification_distance_m"] = verify_cm / 100.0
 
 
 def _write_results(scanner: str, results: Dict[str, object]) -> None:
@@ -452,10 +491,14 @@ def _write_results(scanner: str, results: Dict[str, object]) -> None:
             "positive_y": {
                 "distance_m": BUMP_TARGET_DISTANCE_M,
                 "seconds_per_meter": results["bump_crossing"]["positive_y"]["seconds_per_meter"],
+                "right_speed": int(results["bump_crossing"]["positive_y"]["right_speed"]),
+                "left_speed": int(results["bump_crossing"]["positive_y"]["left_speed"]),
             },
             "negative_y": {
                 "distance_m": BUMP_TARGET_DISTANCE_M,
                 "seconds_per_meter": results["bump_crossing"]["negative_y"]["seconds_per_meter"],
+                "right_speed": int(results["bump_crossing"]["negative_y"]["right_speed"]),
+                "left_speed": int(results["bump_crossing"]["negative_y"]["left_speed"]),
             },
         },
     }
@@ -535,56 +578,161 @@ def main() -> int:
                 f"{production.bump_positive_y_seconds_per_meter:.6f}/"
                 f"{production.bump_negative_y_seconds_per_meter:.6f}"
             )
+            print(
+                "Bump +Y right/left PWM: "
+                f"{production.bump_positive_y_right_speed}/"
+                f"{production.bump_positive_y_left_speed}"
+            )
+            print(
+                "Bump -Y right/left PWM: "
+                f"{production.bump_negative_y_right_speed}/"
+                f"{production.bump_negative_y_left_speed}"
+            )
         return 0
     if not _yes_no("Start calibration?"):
         return 0
 
-    gyro = _calibrate_stationary_gz()
-    right_speed, left_speed = _calibrate_forward_balance(
-        production, float(gyro["gz_bias"])
-    )
-    forward_timing = _calibrate_forward_timing(
-        production,
-        float(gyro["gz_bias"]),
-        right_speed,
-        left_speed,
-    )
-    turning = _calibrate_turning(
-        production,
-        float(gyro["gz_bias"]),
-        right_speed,
-        left_speed,
-        float(forward_timing["seconds_per_meter"]),
-    )
-    positive_y = _calibrate_bump_direction(
-        production,
-        direction="positive_y",
-        profile="bump_crossing_up",
-        gz_bias=float(gyro["gz_bias"]),
-        right_speed=right_speed,
-        left_speed=left_speed,
-        seconds_per_meter=float(forward_timing["seconds_per_meter"]),
-        turn_speed=int(turning["speed"]),
-        ccw_margin=float(turning["ccw_stop_margin_deg"]),
-        cw_margin=float(turning["cw_stop_margin_deg"]),
-    )
-    negative_y = _calibrate_bump_direction(
-        production,
-        direction="negative_y",
-        profile="bump_crossing_down",
-        gz_bias=float(gyro["gz_bias"]),
-        right_speed=right_speed,
-        left_speed=left_speed,
-        seconds_per_meter=float(forward_timing["seconds_per_meter"]),
-        turn_speed=int(turning["speed"]),
-        ccw_margin=float(turning["ccw_stop_margin_deg"]),
-        cw_margin=float(turning["cw_stop_margin_deg"]),
-    )
+    gyro: Dict[str, object] = {"gz_bias": production.gz_bias, "skipped": True}
+    if _yes_no("Calibrate stationary gyro bias?"):
+        gyro = _calibrate_stationary_gz()
+
+    right_speed = production.forward_right_speed or DEFAULT_RIGHT_SPEED
+    left_speed = production.forward_left_speed or DEFAULT_LEFT_SPEED
+    balance_skipped = True
+    if _yes_no("Calibrate flat-floor forward PWM balance?"):
+        right_speed, left_speed = _calibrate_forward_balance(
+            production, float(gyro["gz_bias"])
+        )
+        balance_skipped = False
+
+    forward_timing: Dict[str, object] = {
+        "seconds_per_meter": production.forward_seconds_per_meter or 9.0,
+        "skipped": True,
+    }
+    if _yes_no("Calibrate flat-floor forward distance timing?"):
+        forward_timing = _calibrate_forward_timing(
+            production,
+            float(gyro["gz_bias"]),
+            right_speed,
+            left_speed,
+        )
+
+    turning: Dict[str, object] = {
+        "speed": production.turn_speed or DEFAULT_TURN_SPEED,
+        "ccw_stop_margin_deg": production.turn_ccw_stop_margin_deg,
+        "cw_stop_margin_deg": production.turn_cw_stop_margin_deg,
+        "skipped": True,
+    }
+    if _yes_no("Calibrate turning?"):
+        turning = _calibrate_turning(
+            production,
+            float(gyro["gz_bias"]),
+            right_speed,
+            left_speed,
+            float(forward_timing["seconds_per_meter"]),
+        )
+
+    positive_y: Dict[str, float] = {
+        "distance_m": BUMP_TARGET_DISTANCE_M,
+        "seconds_per_meter": production.bump_positive_y_seconds_per_meter or 9.58,
+        "right_speed": float(
+            production.bump_positive_y_right_speed or DEFAULT_BUMP_RIGHT_SPEED
+        ),
+        "left_speed": float(
+            production.bump_positive_y_left_speed or DEFAULT_BUMP_LEFT_SPEED
+        ),
+    }
+    negative_y: Dict[str, float] = {
+        "distance_m": BUMP_TARGET_DISTANCE_M,
+        "seconds_per_meter": production.bump_negative_y_seconds_per_meter or 9.40,
+        "right_speed": float(
+            production.bump_negative_y_right_speed or DEFAULT_BUMP_RIGHT_SPEED
+        ),
+        "left_speed": float(
+            production.bump_negative_y_left_speed or DEFAULT_BUMP_LEFT_SPEED
+        ),
+    }
+    if _yes_no("Calibrate bump crossing?"):
+        positive_y["right_speed"] = float(
+            _prompt_int(
+                "+Y inner-to-outer right/M1 PWM",
+                int(positive_y["right_speed"]),
+                1,
+                100,
+            )
+        )
+        positive_y["left_speed"] = float(
+            _prompt_int(
+                "+Y inner-to-outer left/M2 PWM",
+                int(positive_y["left_speed"]),
+                1,
+                100,
+            )
+        )
+        negative_y["right_speed"] = float(
+            _prompt_int(
+                "-Y outer-to-inner right/M1 PWM",
+                int(negative_y["right_speed"]),
+                1,
+                100,
+            )
+        )
+        negative_y["left_speed"] = float(
+            _prompt_int(
+                "-Y outer-to-inner left/M2 PWM",
+                int(negative_y["left_speed"]),
+                1,
+                100,
+            )
+        )
+
+        candidate = _bump_candidate(
+            production,
+            gz_bias=float(gyro["gz_bias"]),
+            right_speed=right_speed,
+            left_speed=left_speed,
+            seconds_per_meter=float(forward_timing["seconds_per_meter"]),
+            turn_speed=int(turning["speed"]),
+            ccw_margin=float(turning["ccw_stop_margin_deg"]),
+            cw_margin=float(turning["cw_stop_margin_deg"]),
+            positive_y=positive_y,
+            negative_y=negative_y,
+        )
+        # Trial order avoids manually carrying Alpha back across the ramp.
+        _bump_trial(candidate, direction="positive_y", profile="bump_crossing_up", settings=positive_y)
+        candidate = _bump_candidate(
+            production,
+            gz_bias=float(gyro["gz_bias"]),
+            right_speed=right_speed,
+            left_speed=left_speed,
+            seconds_per_meter=float(forward_timing["seconds_per_meter"]),
+            turn_speed=int(turning["speed"]),
+            ccw_margin=float(turning["ccw_stop_margin_deg"]),
+            cw_margin=float(turning["cw_stop_margin_deg"]),
+            positive_y=positive_y,
+            negative_y=negative_y,
+        )
+        _bump_trial(candidate, direction="negative_y", profile="bump_crossing_down", settings=negative_y)
+        candidate = _bump_candidate(
+            production,
+            gz_bias=float(gyro["gz_bias"]),
+            right_speed=right_speed,
+            left_speed=left_speed,
+            seconds_per_meter=float(forward_timing["seconds_per_meter"]),
+            turn_speed=int(turning["speed"]),
+            ccw_margin=float(turning["ccw_stop_margin_deg"]),
+            cw_margin=float(turning["cw_stop_margin_deg"]),
+            positive_y=positive_y,
+            negative_y=negative_y,
+        )
+        _bump_verification(candidate, direction="positive_y", profile="bump_crossing_up", settings=positive_y)
+        _bump_verification(candidate, direction="negative_y", profile="bump_crossing_down", settings=negative_y)
     results: Dict[str, object] = {
         "gyro": gyro,
         "forward_balance": {
             "right_speed": right_speed,
             "left_speed": left_speed,
+            "skipped": balance_skipped,
         },
         "forward_timing": forward_timing,
         "turning": turning,

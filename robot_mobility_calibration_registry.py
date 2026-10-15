@@ -50,6 +50,10 @@ class MobilityCalibrationSnapshot:
     turn_speed: Optional[int] = None
     bump_positive_y_seconds_per_meter: Optional[float] = None
     bump_negative_y_seconds_per_meter: Optional[float] = None
+    bump_positive_y_right_speed: Optional[int] = None
+    bump_positive_y_left_speed: Optional[int] = None
+    bump_negative_y_right_speed: Optional[int] = None
+    bump_negative_y_left_speed: Optional[int] = None
 
     @property
     def uses_balanced_timed_v2(self) -> bool:
@@ -84,15 +88,33 @@ class MobilityCalibrationSnapshot:
                 f" calibration_forward_seconds_per_meter="
                 f"{self.forward_seconds_per_meter:.6f}"
                 f" calibration_turn_speed={self.turn_speed}"
+                f" calibration_bump_positive_y_speeds="
+                f"{self.bump_positive_y_right_speed}/{self.bump_positive_y_left_speed}"
+                f" calibration_bump_negative_y_speeds="
+                f"{self.bump_negative_y_right_speed}/{self.bump_negative_y_left_speed}"
             )
         return detail
 
     def move_speeds(self, move_profile: str) -> tuple[int, int]:
         if not self.uses_balanced_timed_v2:
             raise MobilityCalibrationError("legacy calibration has no v2 move speeds")
-        assert self.forward_right_speed is not None
-        assert self.forward_left_speed is not None
-        return self.forward_right_speed, self.forward_left_speed
+        if move_profile == "bump_crossing_up":
+            values = (
+                self.bump_positive_y_right_speed,
+                self.bump_positive_y_left_speed,
+            )
+        elif move_profile == "bump_crossing_down":
+            values = (
+                self.bump_negative_y_right_speed,
+                self.bump_negative_y_left_speed,
+            )
+        else:
+            values = (self.forward_right_speed, self.forward_left_speed)
+        if values[0] is None or values[1] is None:
+            raise MobilityCalibrationError(
+                f"v2 move speeds are missing for {move_profile}"
+            )
+        return values[0], values[1]
 
     def move_seconds_per_meter(self, move_profile: str) -> float:
         if not self.uses_balanced_timed_v2:
@@ -298,6 +320,10 @@ def load_mobility_calibration(
         turn_speed: Optional[int] = None
         bump_positive_y_seconds_per_meter: Optional[float] = None
         bump_negative_y_seconds_per_meter: Optional[float] = None
+        bump_positive_y_right_speed: Optional[int] = None
+        bump_positive_y_left_speed: Optional[int] = None
+        bump_negative_y_right_speed: Optional[int] = None
+        bump_negative_y_left_speed: Optional[int] = None
 
         drivetrain = entry.get("drivetrain")
         if drivetrain is not None:
@@ -407,6 +433,22 @@ def load_mobility_calibration(
                 negative_y.get("seconds_per_meter"),
                 "drivetrain.bump_crossing.negative_y.seconds_per_meter",
             )
+            bump_positive_y_right_speed = v2_speed(
+                positive_y.get("right_speed"),
+                "drivetrain.bump_crossing.positive_y.right_speed",
+            )
+            bump_positive_y_left_speed = v2_speed(
+                positive_y.get("left_speed"),
+                "drivetrain.bump_crossing.positive_y.left_speed",
+            )
+            bump_negative_y_right_speed = v2_speed(
+                negative_y.get("right_speed"),
+                "drivetrain.bump_crossing.negative_y.right_speed",
+            )
+            bump_negative_y_left_speed = v2_speed(
+                negative_y.get("left_speed"),
+                "drivetrain.bump_crossing.negative_y.left_speed",
+            )
 
         return MobilityCalibrationSnapshot(
             scanner=scanner,
@@ -436,6 +478,10 @@ def load_mobility_calibration(
             turn_speed=turn_speed,
             bump_positive_y_seconds_per_meter=bump_positive_y_seconds_per_meter,
             bump_negative_y_seconds_per_meter=bump_negative_y_seconds_per_meter,
+            bump_positive_y_right_speed=bump_positive_y_right_speed,
+            bump_positive_y_left_speed=bump_positive_y_left_speed,
+            bump_negative_y_right_speed=bump_negative_y_right_speed,
+            bump_negative_y_left_speed=bump_negative_y_left_speed,
         )
     except MobilityCalibrationError:
         raise
