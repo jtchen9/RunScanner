@@ -48,13 +48,13 @@ TURN_CYCLES = 4
 TURN_SETTLE_SEC = 1.0
 
 FORWARD_DISTANCE_M = 1.0
-FORWARD_DISTANCE_LOW_M = 0.90
-FORWARD_DISTANCE_HIGH_M = 1.10
+FORWARD_DISTANCE_LOW_CM = 90.0
+FORWARD_DISTANCE_HIGH_CM = 110.0
 FORWARD_HEADING_LIMIT_DEG = 5.0
-FORWARD_LATERAL_LIMIT_M = 0.10
+FORWARD_LATERAL_LIMIT_CM = 10.0
 
-BUMP_DISTANCE_LOW_M = 1.85
-BUMP_DISTANCE_HIGH_M = 2.15
+BUMP_DISTANCE_LOW_CM = 185.0
+BUMP_DISTANCE_HIGH_CM = 215.0
 
 
 class PreflightFailure(RuntimeError):
@@ -313,20 +313,24 @@ def _one_metre_check(report: Dict[str, Any]) -> None:
     if not ok:
         _require(report, "1.00-m flat-floor move", False, detail=detail)
         return
-    distance_m = _prompt_float(
-        "Measured forward distance (m)", low=0.0, high=5.0
+    distance_cm = _prompt_float(
+        "Measured forward distance (cm)", low=0.0, high=500.0
     )
     heading_deg = _prompt_float(
-        "Absolute final heading error (degrees)", low=0.0, high=180.0
+        "Final heading error (degrees; CCW/left is positive)",
+        low=-180.0,
+        high=180.0,
     )
-    lateral_m = _prompt_float(
-        "Absolute lateral displacement (m)", low=0.0, high=5.0
+    lateral_cm = _prompt_float(
+        "Lateral displacement (cm; left is positive)",
+        low=-500.0,
+        high=500.0,
     )
     smooth = _yes_no("Was motion smooth, without visible zig-zag or hesitation?")
     passed = (
-        FORWARD_DISTANCE_LOW_M <= distance_m <= FORWARD_DISTANCE_HIGH_M
-        and heading_deg <= FORWARD_HEADING_LIMIT_DEG
-        and lateral_m <= FORWARD_LATERAL_LIMIT_M
+        FORWARD_DISTANCE_LOW_CM <= distance_cm <= FORWARD_DISTANCE_HIGH_CM
+        and abs(heading_deg) <= FORWARD_HEADING_LIMIT_DEG
+        and abs(lateral_cm) <= FORWARD_LATERAL_LIMIT_CM
         and smooth
     )
     _require(
@@ -335,14 +339,14 @@ def _one_metre_check(report: Dict[str, Any]) -> None:
         passed,
         detail=detail,
         elapsed_sec=elapsed,
-        measured_distance_m=distance_m,
-        heading_error_deg=heading_deg,
-        lateral_displacement_m=lateral_m,
+        measured_distance_cm=distance_cm,
+        heading_error_deg_ccw_positive=heading_deg,
+        lateral_displacement_cm_left_positive=lateral_cm,
         smooth=smooth,
         limits={
-            "distance_m": [FORWARD_DISTANCE_LOW_M, FORWARD_DISTANCE_HIGH_M],
-            "heading_error_deg": FORWARD_HEADING_LIMIT_DEG,
-            "lateral_displacement_m": FORWARD_LATERAL_LIMIT_M,
+            "distance_cm": [FORWARD_DISTANCE_LOW_CM, FORWARD_DISTANCE_HIGH_CM],
+            "absolute_heading_error_deg": FORWARD_HEADING_LIMIT_DEG,
+            "absolute_lateral_displacement_cm": FORWARD_LATERAL_LIMIT_CM,
         },
     )
 
@@ -387,21 +391,23 @@ def _bump_direction_check(
     if not ok:
         _require(report, f"bump {label}", False, detail=detail)
         return
-    measured_m = _prompt_float(
-        "Measured forward distance (m)", low=0.0, high=5.0
+    measured_cm = _prompt_float(
+        "Measured forward distance (cm)", low=0.0, high=500.0
     )
     cleared = _yes_no(
         "Did all wheels clear the ramp without stall, fighting, or manual assistance?"
     )
-    passed = BUMP_DISTANCE_LOW_M <= measured_m <= BUMP_DISTANCE_HIGH_M and cleared
+    passed = (
+        BUMP_DISTANCE_LOW_CM <= measured_cm <= BUMP_DISTANCE_HIGH_CM and cleared
+    )
     _require(
         report,
         f"bump {label}",
         passed,
         detail=detail,
-        measured_distance_m=measured_m,
+        measured_distance_cm=measured_cm,
         cleared_without_assistance=cleared,
-        distance_limits_m=[BUMP_DISTANCE_LOW_M, BUMP_DISTANCE_HIGH_M],
+        distance_limits_cm=[BUMP_DISTANCE_LOW_CM, BUMP_DISTANCE_HIGH_CM],
     )
 
 
