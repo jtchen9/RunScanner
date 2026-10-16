@@ -55,6 +55,10 @@ TURN_SETTLE_SEC = 1.0
 BUMP_TARGET_DISTANCE_M = 2.0
 
 
+class CalibrationRejected(RuntimeError):
+    """Operator rejected a completed calibration item; retry only that item."""
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -89,6 +93,15 @@ def _yes_no(label: str, default_yes: bool = False) -> bool:
         if answer in {"n", "no"}:
             return False
         print("Enter Y or N.")
+
+
+def _retry_rejected(label: str, operation):
+    while True:
+        try:
+            return operation()
+        except CalibrationRejected as exc:
+            print(f"{label} rejected: {exc}")
+            print(f"Repeating {label}; earlier accepted sections are preserved.")
 
 
 def _measure_stationary_gz(seconds: float = 5.0) -> Tuple[float, float, int]:
@@ -215,10 +228,12 @@ def _calibrate_stationary_gz() -> Dict[str, object]:
         print(f"GZ_BIAS={mean:+.9f}, spread={spread:.9f}, samples={count}")
     value = statistics.fmean(means)
     between = statistics.pstdev(means)
-    print(f"Accepted mean GZ_BIAS: {value:+.9f} deg/s")
+    print(f"Candidate mean GZ_BIAS: {value:+.9f} deg/s")
     print(f"Between-test spread:   {between:.9f} deg/s")
     if between > 0.10:
-        raise RuntimeError("stationary gyro measurements are not repeatable")
+        raise CalibrationRejected("stationary gyro measurements are not repeatable")
+    if not _yes_no("Accept the stationary gyro bias?", default_yes=True):
+        raise CalibrationRejected("operator did not accept the result")
     return {
         "gz_bias": value,
         "measurement_means": means,
@@ -298,7 +313,7 @@ def _calibrate_forward_timing(
         "Measured verification distance (cm)", 100.0, 1.0, 500.0
     )
     if not _yes_no("Accept the forward timing?", default_yes=True):
-        raise RuntimeError("forward timing was not accepted")
+        raise CalibrationRejected("operator did not accept the result")
     return {
         "trial_seconds": trial_sec,
         "measured_distances_m": distances,
@@ -365,7 +380,7 @@ def _calibrate_turning(
         "Compensated CW cumulative error (degrees)", 0.0, -90.0, 90.0
     )
     if not _yes_no("Accept the turning calibration?", default_yes=True):
-        raise RuntimeError("turning calibration was not accepted")
+        raise CalibrationRejected("operator did not accept the result")
     return {
         "speed": turn_speed,
         "ccw_stop_margin_deg": ccw_margin,
@@ -422,12 +437,12 @@ def _bump_trial(
         f"{int(settings['left_speed'])}"
     )
     input(
-        f"Place Alpha for {label} and press Enter for a "
+        f"Place the robot for {label} and press Enter for a "
         f"{DEFAULT_BUMP_TRIAL_SEC:g}-second trial: "
     )
     _run_forward_for_seconds(calibration, DEFAULT_BUMP_TRIAL_SEC, profile)
-    if not _yes_no("Did Alpha clear the ramp without a stall?", default_yes=True):
-        raise RuntimeError(
+    if not _yes_no("Did the robot clear the ramp without a stall?", default_yes=True):
+        raise CalibrationRejected(
             f"{direction} bump trial stalled; timing was not calculated"
         )
     measured_cm = _prompt_float("Measured forward distance (cm)", 190.0, 20.0, 400.0)
@@ -446,7 +461,7 @@ def _bump_verification(
 ) -> None:
     label = "+Y inner-to-outer" if direction == "positive_y" else "-Y outer-to-inner"
     print(f"\nBump verification: {label}")
-    input(f"Place Alpha for {label} and press Enter for the calibrated 2.0-m verification: ")
+    input(f"Place the robot for {label} and press Enter for the calibrated 2.0-m verification: ")
     ok, detail = motion._run_move(
         forward=True,
         distance_m=BUMP_TARGET_DISTANCE_M,
@@ -456,13 +471,13 @@ def _bump_verification(
     print(detail)
     if not ok:
         raise RuntimeError(detail)
-    if not _yes_no("Did Alpha clear the ramp without a stall?", default_yes=True):
-        raise RuntimeError(
+    if not _yes_no("Did the robot clear the ramp without a stall?", default_yes=True):
+        raise CalibrationRejected(
             f"{direction} bump verification stalled; calibration was rejected"
         )
     verify_cm = _prompt_float("Measured verification distance (cm)", 200.0, 20.0, 400.0)
     if not _yes_no(f"Accept {label} bump timing?", default_yes=True):
-        raise RuntimeError(f"{direction} bump timing was not accepted")
+        raise CalibrationRejected(f"{direction} bump timing was not accepted")
     settings["verification_distance_m"] = verify_cm / 100.0
 
 
@@ -597,7 +612,7 @@ def main() -> int:
 
     gyro: Dict[str, object] = {"gz_bias": production.gz_bias, "skipped": True}
     if _yes_no("Calibrate stationary gyro bias?"):
-        gyro = _calibrate_stationary_gz()
+        gyro = _retry_rejected("stationary gyro bias", _calibrate_stationary_gz)
 
     right_speed = production.forward_right_speed or DEFAULT_RIGHT_SPEED
     left_speed = production.forward_left_speed or DEFAULT_LEFT_SPEED
@@ -613,11 +628,14 @@ def main() -> int:
         "skipped": True,
     }
     if _yes_no("Calibrate flat-floor forward distance timing?"):
-        forward_timing = _calibrate_forward_timing(
-            production,
-            float(gyro["gz_bias"]),
-            right_speed,
-            left_speed,
+        forward_timing = _retry_rejected(
+            "flat-floor forward distance timing",
+            lambda: _calibrate_forward_timing(
+                production,
+                float(gyro["gz_bias"]),
+                right_speed,
+                left_speed,
+            ),
         )
 
     turning: Dict[str, object] = {
@@ -627,12 +645,15 @@ def main() -> int:
         "skipped": True,
     }
     if _yes_no("Calibrate turning?"):
-        turning = _calibrate_turning(
-            production,
-            float(gyro["gz_bias"]),
-            right_speed,
-            left_speed,
-            float(forward_timing["seconds_per_meter"]),
+        turning = _retry_rejected(
+            "turning calibration",
+            lambda: _calibrate_turning(
+                production,
+                float(gyro["gz_bias"]),
+                right_speed,
+                left_speed,
+                float(forward_timing["seconds_per_meter"]),
+            ),
         )
 
     positive_y: Dict[str, float] = {
@@ -689,47 +710,69 @@ def main() -> int:
             )
         )
 
-        candidate = _bump_candidate(
-            production,
-            gz_bias=float(gyro["gz_bias"]),
-            right_speed=right_speed,
-            left_speed=left_speed,
-            seconds_per_meter=float(forward_timing["seconds_per_meter"]),
-            turn_speed=int(turning["speed"]),
-            ccw_margin=float(turning["ccw_stop_margin_deg"]),
-            cw_margin=float(turning["cw_stop_margin_deg"]),
-            positive_y=positive_y,
-            negative_y=negative_y,
+        def current_bump_candidate() -> MobilityCalibrationSnapshot:
+            return _bump_candidate(
+                production,
+                gz_bias=float(gyro["gz_bias"]),
+                right_speed=right_speed,
+                left_speed=left_speed,
+                seconds_per_meter=float(forward_timing["seconds_per_meter"]),
+                turn_speed=int(turning["speed"]),
+                ccw_margin=float(turning["ccw_stop_margin_deg"]),
+                cw_margin=float(turning["cw_stop_margin_deg"]),
+                positive_y=positive_y,
+                negative_y=negative_y,
+            )
+
+        candidate = current_bump_candidate()
+        # Trial order avoids manually carrying the robot back across the ramp.
+        _retry_rejected(
+            "+Y inner-to-outer bump timing trial",
+            lambda: _bump_trial(
+                candidate,
+                direction="positive_y",
+                profile="bump_crossing_up",
+                settings=positive_y,
+            ),
         )
-        # Trial order avoids manually carrying Alpha back across the ramp.
-        _bump_trial(candidate, direction="positive_y", profile="bump_crossing_up", settings=positive_y)
-        candidate = _bump_candidate(
-            production,
-            gz_bias=float(gyro["gz_bias"]),
-            right_speed=right_speed,
-            left_speed=left_speed,
-            seconds_per_meter=float(forward_timing["seconds_per_meter"]),
-            turn_speed=int(turning["speed"]),
-            ccw_margin=float(turning["ccw_stop_margin_deg"]),
-            cw_margin=float(turning["cw_stop_margin_deg"]),
-            positive_y=positive_y,
-            negative_y=negative_y,
+        candidate = current_bump_candidate()
+        _retry_rejected(
+            "-Y outer-to-inner bump timing trial",
+            lambda: _bump_trial(
+                candidate,
+                direction="negative_y",
+                profile="bump_crossing_down",
+                settings=negative_y,
+            ),
         )
-        _bump_trial(candidate, direction="negative_y", profile="bump_crossing_down", settings=negative_y)
-        candidate = _bump_candidate(
-            production,
-            gz_bias=float(gyro["gz_bias"]),
-            right_speed=right_speed,
-            left_speed=left_speed,
-            seconds_per_meter=float(forward_timing["seconds_per_meter"]),
-            turn_speed=int(turning["speed"]),
-            ccw_margin=float(turning["ccw_stop_margin_deg"]),
-            cw_margin=float(turning["cw_stop_margin_deg"]),
-            positive_y=positive_y,
-            negative_y=negative_y,
-        )
-        _bump_verification(candidate, direction="positive_y", profile="bump_crossing_up", settings=positive_y)
-        _bump_verification(candidate, direction="negative_y", profile="bump_crossing_down", settings=negative_y)
+        for direction, profile, settings, label in (
+            ("positive_y", "bump_crossing_up", positive_y, "+Y inner-to-outer"),
+            ("negative_y", "bump_crossing_down", negative_y, "-Y outer-to-inner"),
+        ):
+            while True:
+                try:
+                    _bump_verification(
+                        current_bump_candidate(),
+                        direction=direction,
+                        profile=profile,
+                        settings=settings,
+                    )
+                    break
+                except CalibrationRejected as exc:
+                    print(f"{label} bump verification rejected: {exc}")
+                    print(
+                        f"Repeating the complete {label} timing and verification item; "
+                        "earlier accepted sections are preserved."
+                    )
+                    _retry_rejected(
+                        f"{label} bump timing trial",
+                        lambda: _bump_trial(
+                            current_bump_candidate(),
+                            direction=direction,
+                            profile=profile,
+                            settings=settings,
+                        ),
+                    )
     results: Dict[str, object] = {
         "gyro": gyro,
         "forward_balance": {
