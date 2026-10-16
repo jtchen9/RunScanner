@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import sys
 import time
 from collections import deque
 from dataclasses import replace
@@ -21,6 +22,15 @@ TOF_RECOVERY_SLEEP_SEC = 0.25
 # =========================================================
 ADDR = 0x10
 BUS = 1
+
+MOTOR_STOP_RETRY_COUNT = 5
+MOTOR_STOP_RETRY_DELAY_SEC = 0.10
+MOTOR_STOP_REINIT_RETRY_COUNT = 5
+
+# Set only after every direct and reinitialized stop attempt fails.  This
+# prevents this Python process from issuing another movement command after it
+# has lost the ability to stop the drivetrain reliably.
+_MOTOR_STOP_FAILURE_LATCHED = False
 
 # =========================================================
 # Robot-specific direction mapping
@@ -120,7 +130,13 @@ class _TurnPlanExecution(NamedTuple):
     measured_yaw_deg: float
 
 
+class MotorStopFailure(RuntimeError):
+    """Raised when no stop command can be delivered to the motor HAT."""
+
+
 def _motor_begin() -> Tuple[bool, object, str]:
+    if _MOTOR_STOP_FAILURE_LATCHED:
+        return False, None, "motor_start_blocked_after_critical_stop_failure"
     try:
         m = DFRobot_DC_Motor_IIC(BUS, ADDR)
         st = m.begin()
@@ -137,11 +153,70 @@ def _imu_begin() -> Tuple[bool, object, str]:
         return False, None, f"imu_begin_exception: {e}"
 
 
-def _safe_stop(m) -> None:
+def _safe_stop(m) -> Tuple[bool, str]:
+    """Best-effort emergency stop with retry, reconnect, and failure latch.
+
+    Success means that at least one stop transaction completed without an
+    exception.  It cannot prove physical motor state if the controller itself
+    is malfunctioning; the motor-power switch remains the final emergency
+    control.
+    """
+    global _MOTOR_STOP_FAILURE_LATCHED
+
+    errors = []
+    for attempt in range(1, MOTOR_STOP_RETRY_COUNT + 1):
+        try:
+            m.motor_stop(m.ALL)
+            if attempt > 1:
+                print(
+                    "WARNING_MOTOR_STOP_RECOVERED "
+                    f"path=existing_connection attempt={attempt}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return True, f"motor_stop_ok attempt={attempt}"
+        except Exception as exc:
+            errors.append(f"existing_attempt_{attempt}={type(exc).__name__}:{exc}")
+            if attempt < MOTOR_STOP_RETRY_COUNT:
+                time.sleep(MOTOR_STOP_RETRY_DELAY_SEC)
+
+    recovered_motor = None
     try:
-        m.motor_stop(m.ALL)
-    except Exception:
-        pass
+        recovered_motor = DFRobot_DC_Motor_IIC(BUS, ADDR)
+        status = recovered_motor.begin()
+        errors.append(f"reinitialize_status={status}")
+    except Exception as exc:
+        errors.append(f"reinitialize={type(exc).__name__}:{exc}")
+
+    if recovered_motor is not None:
+        for attempt in range(1, MOTOR_STOP_REINIT_RETRY_COUNT + 1):
+            try:
+                recovered_motor.motor_stop(recovered_motor.ALL)
+                print(
+                    "WARNING_MOTOR_STOP_RECOVERED "
+                    f"path=reinitialized_connection attempt={attempt}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return True, f"motor_stop_ok_after_reinitialize attempt={attempt}"
+            except Exception as exc:
+                errors.append(
+                    f"reinitialized_attempt_{attempt}="
+                    f"{type(exc).__name__}:{exc}"
+                )
+                if attempt < MOTOR_STOP_REINIT_RETRY_COUNT:
+                    time.sleep(MOTOR_STOP_RETRY_DELAY_SEC)
+
+    _MOTOR_STOP_FAILURE_LATCHED = True
+    detail = "; ".join(errors)
+    print(
+        "CRITICAL_MOTOR_STOP_FAILED: cut motor power immediately; "
+        "further movement is blocked in this process; "
+        f"details={detail}",
+        file=sys.stderr,
+        flush=True,
+    )
+    raise MotorStopFailure(detail)
 
 
 def _sleep_checked(sec: float) -> None:
