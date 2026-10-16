@@ -243,9 +243,27 @@ def _run_location_capture() -> Tuple[bool, Dict[str, Any]]:
             "stdout": stdout,
             "stderr": stderr,
         }
-    passed = completed.returncode == 0 and bool(data.get("ok", False))
+    front = data.get("front") if isinstance(data, dict) else None
+    rear = data.get("rear") if isinstance(data, dict) else None
+    roles = data.get("camera_roles") if isinstance(data, dict) else None
+    role_set = set(roles) if isinstance(roles, list) else set()
+    front_ok = isinstance(front, dict) and front.get("ok") is True
+    rear_ok = isinstance(rear, dict) and rear.get("ok") is True
+    both_roles_declared = {"front", "rear"}.issubset(role_set)
+    passed = (
+        completed.returncode == 0
+        and bool(data.get("ok", False))
+        and front_ok
+        and rear_ok
+        and both_roles_declared
+    )
     return passed, {
         "returncode": completed.returncode,
+        "overall_ok": bool(data.get("ok", False)),
+        "front_ok": front_ok,
+        "rear_ok": rear_ok,
+        "both_roles_declared": both_roles_declared,
+        "camera_roles": sorted(role_set),
         "result": data,
         "stderr": stderr,
     }
