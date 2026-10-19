@@ -126,8 +126,8 @@
       "buck_voltage_v": 9.0,
       "bump_crossing": {
         "negative_y": {
-          "command_distance_m": 0.68,
-          "gz_bias": -0.56,
+          "command_distance_m": 2.0,
+          "gz_bias": -0.582014972157687,
           "start": {
             "heading_deg": 270.0,
             "x": 9.06,
@@ -135,8 +135,8 @@
           }
         },
         "positive_y": {
-          "command_distance_m": 0.68,
-          "gz_bias": -0.56,
+          "command_distance_m": 2.0,
+          "gz_bias": -0.582014972157687,
           "start": {
             "heading_deg": 90.0,
             "x": 9.06,
@@ -144,14 +144,47 @@
           }
         }
       },
-      "calibrated_at_utc": "2026-09-10T10:45:15.249248+00:00",
+      "calibrated_at_utc": "2026-10-19T00:04:48.435527+00:00",
       "distance_model": {
         "actual_a": 0.9482737611697806,
         "actual_b": 0.07398456539398868,
         "cmd_a": 1.0545477908894267,
         "cmd_b": -0.07802025999614509
       },
-      "gz_bias": -0.57,
+      "drivetrain": {
+        "bump_crossing": {
+          "negative_y": {
+            "distance_m": 2.0,
+            "left_speed": 40,
+            "right_speed": 40,
+            "seconds_per_meter": 5.825242718446602
+          },
+          "positive_y": {
+            "distance_m": 2.0,
+            "left_speed": 40,
+            "right_speed": 40,
+            "seconds_per_meter": 5.853658536585367
+          }
+        },
+        "forward": {
+          "left_speed": 31,
+          "minimum_distance_m": 0.1,
+          "right_speed": 30,
+          "seconds_per_meter": 8.53080568720379
+        },
+        "heading_hold": {
+          "deadband_deg": 2.0,
+          "kp": 0.3,
+          "max_correction": 2.0
+        },
+        "model": "balanced_timed_v2",
+        "turning": {
+          "ccw_stop_margin_deg": 3.05,
+          "cw_stop_margin_deg": 2.8,
+          "speed": 30
+        }
+      },
+      "gz_bias": -0.582014972157687,
       "move_startup": {
         "forward": {
           "left_kick_speed": 44,
@@ -179,6 +212,10 @@
           "status": "pass",
           "verification_distance_error_m": 0.010000000000000009
         },
+        "drivetrain_v2": {
+          "manual_acceptance": true,
+          "status": "pass"
+        },
         "gz_bias": {
           "checks": {
             "finite_gz_bias": true,
@@ -201,10 +238,10 @@
         "kick_distance_m": 0.07,
         "skip_threshold_m": 0.035
       },
-      "source": "/opt/_RunScanner/TestGyro/calibration/current_calibration.csv",
+      "source": "/opt/_RunScanner/TestGyro/calibration/drivetrain_v2_result.json",
       "turning": {
-        "ccw_stop_margin_deg": 3.5,
-        "cw_stop_margin_deg": 3.4
+        "ccw_stop_margin_deg": 3.05,
+        "cw_stop_margin_deg": 2.8
       }
     },
     "twin-scout-charlie": {
