@@ -88,3 +88,8 @@ sudo reboot
 groups  # should see dialout
 
 ==========================
+ssh locked: 
+
+ssh-keygen -R 192.168.11.1  
+
+==========================
