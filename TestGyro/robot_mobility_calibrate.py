@@ -551,8 +551,61 @@ def _bump_verification(
     settings["verification_lateral_displacement_m"] = lateral_cm / 100.0
 
 
-def _write_results(scanner: str, results: Dict[str, object]) -> None:
+def _read_registry() -> dict:
     document = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or document.get("schema_version") != 1:
+        raise ValueError("unsupported calibration registry schema")
+    if not isinstance(document.get("robots"), dict):
+        raise ValueError("calibration registry has no robots object")
+    return document
+
+
+def _load_starting_profile(scanner: str, *, check: bool = False):
+    if not scanner:
+        raise ValueError("robot identity is empty")
+    document = _read_registry()
+    if check or scanner in document["robots"]:
+        # Existing invalid/disabled entries must not silently become defaults.
+        return load_mobility_calibration(
+            scanner_name_path=SCANNER_NAME_PATH, registry_path=REGISTRY_PATH
+        ), False
+    # These values are trial settings, never an accepted production profile.
+    seed = MobilityCalibrationSnapshot(
+        scanner=scanner, gz_bias=0.0, cmd_a=1.0, cmd_b=0.0,
+        source="first_time_calibration",
+    )
+    return _candidate(
+        seed, gz_bias=0.0,
+        right_speed=DEFAULT_RIGHT_SPEED, left_speed=DEFAULT_LEFT_SPEED,
+        seconds_per_meter=9.0, turn_speed=DEFAULT_TURN_SPEED,
+        ccw_margin=seed.turn_ccw_stop_margin_deg,
+        cw_margin=seed.turn_cw_stop_margin_deg,
+        positive_y_seconds_per_meter=9.58,
+        negative_y_seconds_per_meter=9.40,
+    ), True
+
+
+def _select_section(label: str, first_time: bool) -> bool:
+    selected = _yes_no(label)
+    if first_time and not selected:
+        raise RuntimeError(
+            "First-time calibration requires every section; cancelled without "
+            "changing the production registry."
+        )
+    return selected
+
+
+def _write_results(scanner: str, results: Dict[str, object]) -> None:
+    document = _read_registry()
+    if scanner not in document["robots"]:
+        required = ("gyro", "forward_balance", "forward_timing", "turning")
+        if any(results[key].get("skipped", False) for key in required) or not results.get("bump_calibrated"):
+            raise ValueError("cannot save incomplete first-time calibration")
+        document["robots"][scanner] = {
+            "production_loader_enabled": True,
+            # Loader compatibility only: v2 uses drivetrain timing, not this fit.
+            "distance_model": {"cmd_a": 1.0, "cmd_b": 0.0},
+        }
     entry = document["robots"][scanner]
     entry["gz_bias"] = results["gyro"]["gz_bias"]
     entry["calibrated_at_utc"] = _utc_now()
@@ -642,7 +695,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     scanner = SCANNER_NAME_PATH.read_text(encoding="utf-8").strip()
-    production = load_mobility_calibration()
+    production, first_time = _load_starting_profile(scanner, check=args.check)
     print("============================================================")
     print("BALANCED TIMED DRIVETRAIN CALIBRATION")
     print("============================================================")
@@ -677,17 +730,20 @@ def main() -> int:
                 f"{production.bump_negative_y_left_speed}"
             )
         return 0
+    if first_time:
+        print("First-time calibration: all sections are required.")
+        print("Starting values are trial settings only; nothing has been saved.")
     if not _yes_no("Start calibration?"):
         return 0
 
     gyro: Dict[str, object] = {"gz_bias": production.gz_bias, "skipped": True}
-    if _yes_no("Calibrate stationary gyro bias?"):
+    if _select_section("Calibrate stationary gyro bias?", first_time):
         gyro = _retry_rejected("stationary gyro bias", _calibrate_stationary_gz)
 
     right_speed = production.forward_right_speed or DEFAULT_RIGHT_SPEED
     left_speed = production.forward_left_speed or DEFAULT_LEFT_SPEED
     balance_skipped = True
-    if _yes_no("Calibrate flat-floor forward PWM balance?"):
+    if _select_section("Calibrate flat-floor forward PWM balance?", first_time):
         right_speed, left_speed = _calibrate_forward_balance(
             production, float(gyro["gz_bias"])
         )
@@ -697,7 +753,7 @@ def main() -> int:
         "seconds_per_meter": production.forward_seconds_per_meter or 9.0,
         "skipped": True,
     }
-    if _yes_no("Calibrate flat-floor forward distance timing?"):
+    if _select_section("Calibrate flat-floor forward distance timing?", first_time):
         forward_timing = _retry_rejected(
             "flat-floor forward distance timing",
             lambda: _calibrate_forward_timing(
@@ -714,7 +770,7 @@ def main() -> int:
         "cw_stop_margin_deg": production.turn_cw_stop_margin_deg,
         "skipped": True,
     }
-    if _yes_no("Calibrate turning?"):
+    if _select_section("Calibrate turning?", first_time):
         turning = _retry_rejected(
             "turning calibration",
             lambda: _calibrate_turning(
@@ -746,7 +802,8 @@ def main() -> int:
             production.bump_negative_y_left_speed or DEFAULT_BUMP_LEFT_SPEED
         ),
     }
-    if _yes_no("Calibrate bump crossing?"):
+    bump_calibrated = _select_section("Calibrate bump crossing?", first_time)
+    if bump_calibrated:
         def current_bump_candidate() -> MobilityCalibrationSnapshot:
             return _bump_candidate(
                 production,
@@ -801,6 +858,7 @@ def main() -> int:
                         settings=settings,
                     )
     results: Dict[str, object] = {
+        "bump_calibrated": bump_calibrated,
         "gyro": gyro,
         "forward_balance": {
             "right_speed": right_speed,
