@@ -499,6 +499,70 @@
         "cw_stop_margin_deg": 1.9
       }
     },
+    "twin-scout-hotel": {
+      "bump_crossing": {
+        "negative_y": {
+          "command_distance_m": 2.0,
+          "gz_bias": 0.08435667662352031
+        },
+        "positive_y": {
+          "command_distance_m": 2.0,
+          "gz_bias": 0.08435667662352031
+        }
+      },
+      "calibrated_at_utc": "2026-10-23T02:30:57.103754+00:00",
+      "distance_model": {
+        "cmd_a": 1.0,
+        "cmd_b": 0.0
+      },
+      "drivetrain": {
+        "bump_crossing": {
+          "negative_y": {
+            "distance_m": 2.0,
+            "left_speed": 40,
+            "right_speed": 40,
+            "seconds_per_meter": 6.0
+          },
+          "positive_y": {
+            "distance_m": 2.0,
+            "left_speed": 40,
+            "right_speed": 40,
+            "seconds_per_meter": 6.0
+          }
+        },
+        "forward": {
+          "left_speed": 30,
+          "minimum_distance_m": 0.1,
+          "right_speed": 31,
+          "seconds_per_meter": 7.894736842105264
+        },
+        "heading_hold": {
+          "deadband_deg": 2.0,
+          "kp": 0.3,
+          "max_correction": 2.0
+        },
+        "model": "balanced_timed_v2",
+        "turning": {
+          "ccw_stop_margin_deg": 2.4,
+          "cw_stop_margin_deg": 2.3,
+          "speed": 30
+        }
+      },
+      "gz_bias": 0.08435667662352031,
+      "production_loader_enabled": true,
+      "quality": {
+        "drivetrain_v2": {
+          "manual_acceptance": true,
+          "status": "pass"
+        },
+        "status": "pass"
+      },
+      "source": "/opt/_RunScanner/TestGyro/calibration/drivetrain_v2_result.json",
+      "turning": {
+        "ccw_stop_margin_deg": 2.4,
+        "cw_stop_margin_deg": 2.3
+      }
+    },
     "twin-scout-india": {
       "bump_crossing": {
         "negative_y": {
