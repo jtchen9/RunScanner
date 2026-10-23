@@ -498,6 +498,70 @@
         "ccw_stop_margin_deg": 2.1,
         "cw_stop_margin_deg": 1.9
       }
+    },
+    "twin-scout-india": {
+      "bump_crossing": {
+        "negative_y": {
+          "command_distance_m": 2.0,
+          "gz_bias": 0.3291632447552899
+        },
+        "positive_y": {
+          "command_distance_m": 2.0,
+          "gz_bias": 0.3291632447552899
+        }
+      },
+      "calibrated_at_utc": "2026-10-23T01:41:26.271527+00:00",
+      "distance_model": {
+        "cmd_a": 1.0,
+        "cmd_b": 0.0
+      },
+      "drivetrain": {
+        "bump_crossing": {
+          "negative_y": {
+            "distance_m": 2.0,
+            "left_speed": 40,
+            "right_speed": 40,
+            "seconds_per_meter": 6.0
+          },
+          "positive_y": {
+            "distance_m": 2.0,
+            "left_speed": 40,
+            "right_speed": 40,
+            "seconds_per_meter": 6.0
+          }
+        },
+        "forward": {
+          "left_speed": 32,
+          "minimum_distance_m": 0.1,
+          "right_speed": 29,
+          "seconds_per_meter": 8.144796380090497
+        },
+        "heading_hold": {
+          "deadband_deg": 2.0,
+          "kp": 0.3,
+          "max_correction": 2.0
+        },
+        "model": "balanced_timed_v2",
+        "turning": {
+          "ccw_stop_margin_deg": 1.9,
+          "cw_stop_margin_deg": 1.9,
+          "speed": 30
+        }
+      },
+      "gz_bias": 0.3291632447552899,
+      "production_loader_enabled": true,
+      "quality": {
+        "drivetrain_v2": {
+          "manual_acceptance": true,
+          "status": "pass"
+        },
+        "status": "pass"
+      },
+      "source": "/opt/_RunScanner/TestGyro/calibration/drivetrain_v2_result.json",
+      "turning": {
+        "ccw_stop_margin_deg": 1.9,
+        "cw_stop_margin_deg": 1.9
+      }
     }
   },
   "schema_version": 1
