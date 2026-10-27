@@ -89,6 +89,9 @@ def main() -> None:
         mobility_report = get_mobility_report_payload()
         status_report = build_status_report()
 
+        from robot_handlers_traffic import pending_records, acknowledge_records, quarantine_records
+        traffic_records = pending_records(limit=20)
+
         ok, payload = fetch_commands(
             nms_base=nms_base,
             scanner=scanner,
@@ -97,11 +100,18 @@ def main() -> None:
             av_streaming=get_av_streaming_flag(),
             mobility_report=mobility_report,
             status_report=status_report,
+            traffic_records=traffic_records,
         )
         if not ok:
             log(f"poll fail scanner={scanner} via={nms_base} {payload}")
             time.sleep(POLL_INTERVAL_SEC)
             continue
+
+        sent_ids = {record["record_id"] for record in traffic_records}
+        acknowledge_records([record_id for record_id in payload.get("traffic_ack_ids", [])
+                             if record_id in sent_ids])
+        quarantine_records([item for item in payload.get("traffic_rejections", [])
+                            if item.get("record_id") in sent_ids])
 
         # Option B:
         # once command poll succeeds, clear the pending mobility report

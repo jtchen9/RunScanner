@@ -46,7 +46,7 @@ def dispatch(
     if action in ("traffic.session.start", "traffic.session.stop"):
         from robot_handlers_traffic import start_session, stop_session
         if action == "traffic.session.start":
-            ok, detail = start_session(scanner, args, cmd_fields.get("cmd_id", ""))
+            ok, detail = start_session(scanner, args, cmd_fields.get("traffic_execution_id") or cmd_fields.get("cmd_id", ""))
         else:
             ok, detail = stop_session(scanner, args)
         return ("ok" if ok else "error"), detail

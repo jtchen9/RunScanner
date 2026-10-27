@@ -12,6 +12,7 @@ import re
 import signal
 import subprocess
 import threading
+import time
 import uuid
 
 from config import TRAFFIC_STATE_DIR, TRAFFIC_IPERF3_BIN, get_ax210_iface, local_ts
@@ -59,6 +60,21 @@ def acknowledge_records(record_ids):
         for record_id in record_ids:
             if re.fullmatch(r"[0-9a-f]{32}", str(record_id)):
                 (Path(TRAFFIC_STATE_DIR) / "pending" / (record_id + ".json")).unlink(missing_ok=True)
+
+
+def quarantine_records(rejections):
+    """Keep rejected records on disk for inspection instead of dropping them."""
+    with _LOCK:
+        for item in rejections:
+            record_id = item.get("record_id")
+            if not isinstance(record_id, str) or not re.fullmatch(r"[0-9a-f]{32}", record_id):
+                continue
+            source = Path(TRAFFIC_STATE_DIR) / "pending" / (record_id + ".json")
+            if source.exists():
+                record = json.loads(source.read_text(encoding="utf-8"))
+                record["rejection_detail"] = str(item.get("detail") or "")
+                _write(Path(TRAFFIC_STATE_DIR) / "rejected" / source.name, record)
+                source.unlink()
 
 
 def _integer(value, name, low, high):
@@ -137,6 +153,12 @@ def start_session(scanner, args, execution_id):
             return False, "session already running"
         try:
             cmd, metadata = _prepare(args)
+            ports = args.get("server_ports") or [args["server_port"]]
+            if not isinstance(ports, list) or not 1 <= len(ports) <= 100:
+                raise ValueError("invalid server_ports")
+            ports = [_integer(port, "server_port", 1, 65535) for port in ports]
+            first_port = int(args["server_port"])
+            ports = [first_port] + [port for port in ports if port != first_port]
             context = {"scanner": scanner, "session_id": session_id,
                        "execution_id": str(execution_id), **metadata}
             # Fail before launch if durable state cannot be written.
@@ -151,28 +173,49 @@ def start_session(scanner, args, execution_id):
                                "detail": detail, "completion_time": local_ts(), "raw": {}})
             return False, detail
         started_at = local_ts()
-        state = {"proc": proc, "stop_requested": False}
+        state = {"proc": proc, "stop_requested": False, "execution_id": str(execution_id)}
         _RUNNING[key] = state
 
         def watch():
+            nonlocal proc, context, started_at
             raw, detail, status = {}, "", "ok"
+            attempts = []
+            deadline = time.monotonic() + metadata["duration_sec"] + 45
             try:
-                try:
-                    out, err = proc.communicate(timeout=metadata["duration_sec"] + 30)
-                except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    out, err = proc.communicate()
-                    status, detail = "error", "session timeout"
-                try:
-                    raw = json.loads(out)
-                    if not isinstance(raw, dict):
-                        raise ValueError("expected JSON object")
-                except (ValueError, TypeError):
-                    raw = {"raw_output": out}
-                    status, detail = "error", detail or "invalid iperf3 JSON"
-                if proc.returncode != 0 or raw.get("error"):
-                    status = "error"
-                    detail = detail or str(raw.get("error") or err.strip() or "iperf3 failed")
+                for index, port in enumerate(ports):
+                    if index:
+                        with _LOCK:
+                            if state["stop_requested"]:
+                                break
+                            next_args = {**args, "server_port": port}
+                            next_cmd, next_meta = _prepare(next_args)
+                            proc = subprocess.Popen(next_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                    text=True, start_new_session=True)
+                            state["proc"] = proc
+                            context.update(next_meta)
+                            started_at = local_ts()
+                    try:
+                        out, err = proc.communicate(timeout=max(.1, deadline - time.monotonic()))
+                    except subprocess.TimeoutExpired:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                        out, err = proc.communicate()
+                        status, detail = "error", "session timeout"
+                    try:
+                        raw = json.loads(out)
+                        if not isinstance(raw, dict):
+                            raise ValueError("expected JSON object")
+                    except (ValueError, TypeError):
+                        raw = {"raw_output": out}
+                        status, detail = "error", detail or "invalid iperf3 JSON"
+                    attempts.append({"server_port": port, "error": str(raw.get("error") or ""),
+                                     "returncode": proc.returncode})
+                    busy = "server is busy" in str(raw.get("error") or "").lower()
+                    if busy and index + 1 < len(ports) and not state["stop_requested"] and time.monotonic() < deadline:
+                        continue
+                    if proc.returncode != 0 or raw.get("error"):
+                        status = "error"
+                        detail = detail or str(raw.get("error") or err.strip() or "iperf3 failed")
+                    break
                 if state["stop_requested"]:
                     status, detail = "stopped", "stop requested"
             except Exception as exc:
@@ -187,13 +230,11 @@ def start_session(scanner, args, execution_id):
                         _record("result", {**context, "started_at": started_at,
                                            "completion_time": local_ts(), "status": status,
                                            "detail": detail, "raw": raw, "wifi_end": wifi_end,
-                                           "returncode": proc.returncode})
+                                           "attempts": attempts, "returncode": proc.returncode})
                         _write(claim, {**context, "status": status, "detail": detail})
                     finally:
                         _RUNNING.pop(key, None)
 
-        # Start the watcher before recording the event so a write failure cannot
-        # leave a child with nobody draining its output or enforcing its timeout.
         threading.Thread(target=watch, daemon=True).start()
         _record("event", {**context, "action": "traffic.session.start",
                           "status": "ok", "started_at": started_at,
@@ -207,6 +248,9 @@ def stop_session(scanner, args):
         state = _RUNNING.get(key)
         if state is None:
             return False, "no running session"
+        expected = str(args.get("execution_id") or "")
+        if expected and expected != state["execution_id"]:
+            return False, "stop execution does not match running session"
         state["stop_requested"] = True
         try:
             os.killpg(state["proc"].pid, signal.SIGTERM)
@@ -215,4 +259,19 @@ def stop_session(scanner, args):
         except OSError as exc:
             state["stop_requested"] = False
             return False, "stop failed: " + str(exc)
+        proc = state["proc"]
+        def kill_if_needed():
+            with _LOCK:
+                if proc.poll() is None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+        timer = threading.Timer(3, kill_if_needed)
+        timer.daemon = True
+        timer.start()
+        _record("event", {"scanner": scanner, "session_id": key[1],
+                          "execution_id": state["execution_id"],
+                          "action": "traffic.session.stop", "status": "ok",
+                          "detail": "stop requested", "completion_time": local_ts()})
         return True, "stop requested"

@@ -13,6 +13,7 @@ def fetch_commands(
     av_streaming: Optional[int] = None,
     mobility_report: Optional[Dict[str, Any]] = None,
     status_report: Optional[Dict[str, Any]] = None,
+    traffic_records: Optional[list[Dict[str, Any]]] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
     """
     Poll NMS for due commands using POST.
@@ -32,6 +33,7 @@ def fetch_commands(
         "av_streaming": av_streaming,
         "status_report": status_report,
         "mobility_report": mobility_report,
+        "traffic_records": traffic_records or [],
     }
 
     try:

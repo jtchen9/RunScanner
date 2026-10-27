@@ -95,5 +95,35 @@ class TrafficTests(unittest.TestCase):
             popen.assert_not_called()
         self.assertEqual(self.wait_result()['status'], 'error')
 
+    def test_busy_retry_uses_next_port(self):
+        def prepare(args):
+            port = args['server_port']
+            body = 'print(\'{"error":"the server is busy running a test. try again later"}\')' if port == 5201 else 'print(\'{"end": {}}\')'
+            command, metadata = self.fake_prepare(body)
+            metadata['server_port'] = port
+            return command, metadata
+        with patch.object(m, '_prepare', side_effect=prepare) as prepare_mock:
+            m.start_session('alpha', {**ARGS, 'server_ports': [5201, 5202]}, 'retry1')
+            result = self.wait_result()
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(result['server_port'], 5202)
+        self.assertEqual([a['server_port'] for a in result['attempts']], [5201, 5202])
+        self.assertEqual(prepare_mock.call_count, 2)
+
+    def test_nonbusy_failure_does_not_retry(self):
+        with patch.object(m, '_prepare', return_value=self.fake_prepare('print(\'{"error":"connection refused"}\')')) as prepare_mock:
+            m.start_session('alpha', {**ARGS, 'server_ports': [5201, 5202]}, 'retry2')
+            self.assertEqual(self.wait_result()['status'], 'error')
+        self.assertEqual(prepare_mock.call_count, 1)
+
+    def test_rejection_preserves_record(self):
+        with patch.object(m, '_prepare', return_value=self.fake_prepare('print(\'{"end": {}}\')')):
+            m.start_session('alpha', ARGS, 'reject1')
+            result = self.wait_result()
+        m.quarantine_records([{'record_id': result['record_id'], 'detail': 'unknown execution'}])
+        self.assertFalse(any(r['record_id'] == result['record_id'] for r in m.pending_records()))
+        stored = json.loads((m.TRAFFIC_STATE_DIR / 'rejected' / (result['record_id'] + '.json')).read_text())
+        self.assertEqual(stored['raw'], result['raw'])
+
 if __name__ == '__main__':
     unittest.main()
