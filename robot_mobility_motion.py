@@ -150,6 +150,9 @@ def _imu_begin() -> Tuple[bool, object, str]:
         imu = ICM20948()
         return True, imu, "imu ok"
     except Exception as e:
+        import traceback
+        print("IMU initialization failed:", file=sys.stderr, flush=True)
+        traceback.print_exc()
         return False, None, f"imu_begin_exception: {e}"
 
 
