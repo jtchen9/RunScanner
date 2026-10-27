@@ -486,6 +486,8 @@ def _run_move(
         )
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return False, f"MOVE_EXEC_FAIL {e}"
 
     finally:
