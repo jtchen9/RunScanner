@@ -22,7 +22,7 @@
           }
         }
       },
-      "calibrated_at_utc": "2026-10-15T11:20:41.032221+00:00",
+      "calibrated_at_utc": "2026-10-27T11:03:24.609791+00:00",
       "distance_model": {
         "actual_a": 0.8759748172217708,
         "actual_b": 0.07116165718927703,
@@ -33,22 +33,22 @@
         "bump_crossing": {
           "negative_y": {
             "distance_m": 2.0,
-            "left_speed": 39,
+            "left_speed": 40,
             "right_speed": 40,
-            "seconds_per_meter": 5.660377358490566
+            "seconds_per_meter": 5.797101449275363
           },
           "positive_y": {
             "distance_m": 2.0,
-            "left_speed": 39,
+            "left_speed": 40,
             "right_speed": 40,
-            "seconds_per_meter": 5.660377358490566
+            "seconds_per_meter": 5.853658536585367
           }
         },
         "forward": {
           "left_speed": 29,
           "minimum_distance_m": 0.1,
           "right_speed": 30,
-          "seconds_per_meter": 8.035714
+          "seconds_per_meter": 8.450704225352114
         },
         "heading_hold": {
           "deadband_deg": 2.0,
