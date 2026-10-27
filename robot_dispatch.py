@@ -40,8 +40,16 @@ def dispatch(
     action = (cmd_fields.get("action") or "").strip()
     args = parse_args_json(cmd_fields.get("args_json") or "")
 
-    if category and category not in ("scan", "av", "voice", "mobility", "health"):
+    if category and category not in ("scan", "av", "voice", "mobility", "health", "traffic"):
         return "error", f"unsupported category={category}"
+
+    if action in ("traffic.session.start", "traffic.session.stop"):
+        from robot_handlers_traffic import start_session, stop_session
+        if action == "traffic.session.start":
+            ok, detail = start_session(scanner, args, cmd_fields.get("cmd_id", ""))
+        else:
+            ok, detail = stop_session(scanner, args)
+        return ("ok" if ok else "error"), detail
 
     if category == "health":
         if action == "health.check.cameras":

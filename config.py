@@ -20,6 +20,8 @@ import concurrent.futures
 SYSTEMCTL = "/usr/bin/systemctl"
 SUDO = "/usr/bin/sudo"
 BASE_DIR = Path("/opt/_RunScanner")
+TRAFFIC_STATE_DIR = BASE_DIR / "traffic_state"
+TRAFFIC_IPERF3_BIN = "/usr/bin/iperf3"
 NMS_CACHE_FILE = BASE_DIR / "nms_base.txt"
 NMS_TIMEOUT_SEC = 10  # Increased from 2 to 10 for slow NMS responses
 NMS_PORT = 8000
