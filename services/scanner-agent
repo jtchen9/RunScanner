@@ -1,5 +1,5 @@
 # /etc/sudoers.d/scanner-agent
-# Allow pi to control only our scanner services and the minimal
+# Allow pi to control only our scanner services and the minimal 
 # privileged commands needed by bundle install and identity transition.
 
 pi ALL=(root) NOPASSWD: \

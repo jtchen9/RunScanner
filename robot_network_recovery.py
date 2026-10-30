@@ -8,10 +8,10 @@ import subprocess
 import time
 
 
+# Select an existing suitable profile via NetworkManager, without SSID/BSSID lock.
 INTERFACE = 'wlP1p1s0'
-PROFILE = 'prplMesh_FH_FFF8B8'
 ACTIVATE = ['/usr/bin/sudo', '-n', '/usr/bin/nmcli', '--wait', '12',
-            'connection', 'up', 'id', PROFILE, 'ifname', INTERFACE]
+            'connection', 'up', 'ifname', INTERFACE]
 
 
 def run(argv, timeout):
