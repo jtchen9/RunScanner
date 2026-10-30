@@ -41,6 +41,9 @@ def fetch_commands(
         if r.status_code != 200:
             return False, {"error": f"http {r.status_code}", "text": r.text[:200]}
         return True, r.json()
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+        return False, {"error": f"exception {type(e).__name__}",
+                       "detail": str(e)[:200], "transport_failure": True}
     except Exception as e:
         return False, {"error": f"exception {type(e).__name__}", "detail": str(e)[:200]}
     

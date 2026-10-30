@@ -1,0 +1,2 @@
+# Exact activation only. No arbitrary nmcli commands, shell, or password access.
+pi ALL=(root) NOPASSWD: /usr/bin/nmcli --wait 12 connection up id prplMesh_FH_FFF8B8 ifname wlP1p1s0

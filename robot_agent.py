@@ -9,6 +9,7 @@ import subprocess
 
 from common_log import append_log_line
 from common_nms import fetch_commands, ack_command
+from robot_network_recovery import NetworkRecovery
 from robot_dispatch import dispatch
 from robot_agent_handlers import (
     get_av_streaming_flag,
@@ -69,6 +70,8 @@ def run_register_once() -> None:
 def main() -> None:
     log(f"agent started poll={POLL_INTERVAL_SEC}s limit={POLL_LIMIT}")
 
+    recovery = NetworkRecovery(log)
+
     while True:
         scanner = read_scanner_name()
         if not scanner:
@@ -83,7 +86,9 @@ def main() -> None:
         nms_base = get_nms_base()
         if not nms_base:
             log(f"offline: no NMS reachable; retry in {OFFLINE_RETRY_SEC}s")
-            time.sleep(OFFLINE_RETRY_SEC)
+            attempted = recovery.failed("NMS discovery failed")
+            if not attempted:
+                time.sleep(OFFLINE_RETRY_SEC)
             continue
 
         mobility_report = get_mobility_report_payload()
@@ -104,9 +109,14 @@ def main() -> None:
         )
         if not ok:
             log(f"poll fail scanner={scanner} via={nms_base} {payload}")
-            time.sleep(POLL_INTERVAL_SEC)
+            attempted = False
+            if payload.get("transport_failure"):
+                attempted = recovery.failed("NMS poll transport failure")
+            if not attempted:
+                time.sleep(POLL_INTERVAL_SEC)
             continue
 
+        recovery.nms_ok()
         sent_ids = {record["record_id"] for record in traffic_records}
         acknowledge_records([record_id for record_id in payload.get("traffic_ack_ids", [])
                              if record_id in sent_ids])
