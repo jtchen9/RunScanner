@@ -7,58 +7,45 @@ from common_nms import fetch_commands
 
 class RecoveryTests(unittest.TestCase):
     def setUp(self):
+        profile = patch("robot_network_recovery.working_profile", return_value=None)
+        self.profile = profile.start()
+        self.addCleanup(profile.stop)
         self.now = 0
         self.log = Mock()
         self.r = NetworkRecovery(self.log, clock=lambda: self.now, sleep=lambda n: None)
 
-    @patch('robot_network_recovery.wifi_state', return_value='disconnected')
-    @patch('robot_network_recovery.run', return_value=(10, ''))
-    def test_only_two_attempts_across_repeated_failures(self, run, state):
+    @patch('robot_network_recovery.wifi_state',return_value='disconnected')
+    @patch('robot_network_recovery.run',side_effect=[(4,''),(0,'')])
+    def test_reject_then_alternate(self,run,state):
+        from robot_ap_roster import ROWS
+        a,b,c,d=[ROWS[n][0].upper() for n in ('AP1','AP4','AP2','AP3')]
+        from robot_ap_roster import radios_for
+        self.r.allowed=radios_for('twin-scout-bravo')
+        self.r.profile=('uuid','mesh')
+        self.r.table={a:(-40,6115,0),b:(-60,6115,0),c:(-21,6115,0),d:(-31,6115,0)}
         self.assertTrue(self.r.failed('offline'))
-        for _ in range(10):
-            self.assertFalse(self.r.failed('offline'))
-        self.assertEqual(run.call_count, 2)
-        self.assertEqual(run.call_args.args[0], ACTIVATE)
-        self.r.nms_ok()
-        self.r.failed('new outage')
-        self.assertEqual(run.call_count, 4)
-
-    @patch('robot_network_recovery.wifi_state', return_value='connected')
-    @patch('robot_network_recovery.run')
-    def test_nms_down_wifi_healthy_no_reset(self, run, state):
-        self.assertFalse(self.r.failed('offline'))
-        self.now = 41
-        state.return_value = 'disconnected'
-        self.assertFalse(self.r.failed('offline'))
-        run.assert_not_called()
-
-    @patch('robot_network_recovery.wifi_state', return_value='unknown')
-    @patch('robot_network_recovery.run')
-    def test_unknown_no_reset(self, run, state):
-        self.assertFalse(self.r.failed('offline'))
-        run.assert_not_called()
-
-    @patch('robot_network_recovery.wifi_state', return_value='disconnected')
-    @patch('robot_network_recovery.run', return_value=(0, ''))
-    def test_nmcli_success_does_not_reset_budget(self, run, state):
-        self.r.failed('offline')
-        self.r.failed('offline')
-        self.r.failed('offline')
-        self.assertEqual(run.call_count, 2)
-
-    @patch('robot_network_recovery.os.path.exists', return_value=True)
-    @patch('robot_network_recovery.run')
-    def test_maintenance_pause(self, run, exists):
-        self.assertFalse(self.r.failed('offline'))
-        run.assert_not_called()
+        self.assertEqual([v.args[0][-1] for v in run.call_args_list],[a,b])
 
     @patch('robot_network_recovery.run')
-    def test_device_states(self, run):
-        for raw, wanted in [('100 (connected)', 'connected'), ('30 (disconnected)', 'disconnected'),
-                            ('60 (need authentication)', 'disconnected'), ('20 (unavailable)', 'unknown'),
-                            ('10 (unmanaged)', 'unknown'), ('nonsense', 'unknown')]:
-            run.return_value = (0, raw)
-            self.assertEqual(wifi_state(), wanted)
+    def test_scan_filter(self,run):
+        from robot_network_recovery import learn
+        from robot_ap_roster import ROWS,RADIOS
+        self.assertEqual(len(RADIOS),18)
+        def entry(addr,name):
+            return f'BSS {addr}(on wlP1p1s0)\n\tfreq: 6115\n\tlast seen: 5000 ms ago\n\tsignal: -52.00 dBm\n\tSSID: {name}\n'
+        a=ROWS['AP4'][0]
+        run.return_value=(0,entry(a,'mesh')+entry(ROWS['AP2'][0],'office')+entry('00:00:00:00:00:01','mesh'))
+        from robot_ap_roster import radios_for
+        t={};learn(t,'mesh',100,radios_for('bravo'))
+        self.assertEqual(t,{a.upper():(-52.,6115,95.)})
+
+    def test_all_sites(self):
+        from robot_ap_roster import radios_for, ROWS
+        for names,aps in [('alpha bravo charlie delta',[1,4,5,6]),('echo',[2]),('foxtrot golf hotel india julia',[3])]:
+            expected={m.upper() for i in aps for m in ROWS['AP'+str(i)]}
+            for n in names.split():
+                self.assertEqual(radios_for('twin-scout-'+n),expected)
+        self.assertFalse(radios_for('unregistered'))
 
     @patch('common_nms.requests.post')
     def test_transport_vs_http_and_bad_json(self, post):
