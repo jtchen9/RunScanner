@@ -3,6 +3,7 @@
 No background thread, motion commands, daemon restarts, or command replay.
 Budget resets only after a successful NMS poll, not after nmcli succeeds.
 """
+import re
 import os
 import subprocess
 import time
@@ -32,67 +33,87 @@ def wifi_state(timeout=2):
     code = state.split(' ', 1)[0]
     if code == '100':
         return 'connected'
-    if code in ('30', '40', '50', '60', '70', '80', '90', '120'):
+    if code in ('30', '120'):
         return 'disconnected'
     # Missing, unmanaged, unavailable, or deactivating: do not override intent.
     return 'unknown'
 
 
+MAC = r'(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}'
+UUID = r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}'
+ROW = re.compile(r'([^:]*):(' + MAC + r'):(\d+):([^:]*):(.*)')
+PAUSE = '/run/robot-network-recovery.pause'
+
+
+def visible():
+    # Read NetworkManager's scan cache; never initiate a scan during a roam.
+    rc, out = run(['/usr/bin/nmcli', '-t', '-e', 'no', '-f',
+                   'IN-USE,BSSID,SIGNAL,SECURITY,SSID', 'device', 'wifi', 'list',
+                   'ifname', INTERFACE, '--rescan', 'no'], 2)
+    return [m.groups() for row in out.splitlines()
+            if (m := ROW.fullmatch(row))] if rc == 0 else []
+
+
 class NetworkRecovery:
-    def __init__(self, log, clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, log, clock=time.monotonic):
         self.log = log
         self.clock = clock
-        self.sleep = sleep
-        self.outage_started = None
-        self.attempts = 0
-        self.exhausted_logged = False
+        self.context = None
+        self.refresh_at = 0
+        self.started = None
+        self.next_at = 0
+        self.tried = {}
 
     def nms_ok(self):
-        if self.outage_started is not None:
-            self.log(f'NET_RECOVERY NMS poll restored; attempts={self.attempts}')
-        self.outage_started = None
-        self.attempts = 0
-        self.exhausted_logged = False
+        now = self.clock()
+        if self.started is not None:
+            self.log('NET_RECOVERY NMS poll restored')
+            self.refresh_at = 0
+        self.started = None
+        self.tried.clear()
+        if now < self.refresh_at:
+            return
+        self.refresh_at = now + 30
+        rc, uuid = run(['/usr/bin/nmcli', '-g', 'GENERAL.CON-UUID',
+                        'device', 'show', INTERFACE], 2)
+        active = next((row for row in visible() if row[0] == '*'), None)
+        self.context = ((uuid, active[3], active[4]) if active and active[4]
+                        and not rc and re.fullmatch(UUID, uuid) else None)
 
     def failed(self, reason):
-        """Return True if activation was attempted; caller may poll promptly.
-
-        A 40s window starts on the first observed NMS failure, after the failed
-        request/discovery. Each nmcli operation waits <=12s, subprocess <=14s.
-        No new attempt starts after this window or after two attempts.
-        """
-        if self.outage_started is None:
-            self.outage_started = self.clock()
+        now = self.clock()
+        if self.started is None:
+            self.started = now
+            self.next_at = now + 5
             self.log(f'NET_RECOVERY outage detected: {reason}')
-        deadline = self.outage_started + 40
-        tried = False
-        while True:
-            if self.attempts >= 2 or self.clock() >= deadline:
-                if not self.exhausted_logged:
-                    self.log('NET_RECOVERY quick recovery exhausted; normal polling continues')
-                    self.exhausted_logged = True
-                return tried
-            if os.path.exists('/run/robot-network-recovery.pause'):
-                return tried
-            remaining = deadline - self.clock()
-            state = wifi_state(timeout=min(2, remaining))
-            if state != 'disconnected':
-                # A reachable HTTP service, healthy Wi-Fi or query error does not
-                # justify disconnecting or resetting the radio.
-                return tried
-            if deadline - self.clock() < 14:
-                self.exhausted_logged = True
-                self.attempts = 2
-                self.log('NET_RECOVERY insufficient time for another activation; stopped')
-                return tried
-            self.attempts += 1
-            tried = True
-            self.log(f'NET_RECOVERY activation {self.attempts}/2 interface={INTERFACE}')
-            rc, _ = run(ACTIVATE, timeout=14)
-            self.log(f'NET_RECOVERY activation result rc={rc}; no command replay')
-            if rc == 0:
-                return True
-            # Do not log nmcli output or secrets. Existing NetworkManager journal
-            # records detailed failure reasons, including permissions failures.
-            if self.attempts < 2:
-                self.sleep(min(2, max(0, deadline - self.clock())))
+        if now < self.next_at or os.path.exists(PAUSE):
+            return False
+        if wifi_state() != 'disconnected':
+            return False
+        target = None
+        args = ACTIVATE
+        if self.context:
+            uuid, security, ssid = self.context
+            candidates = [(self.tried.get(mac.upper(), -1), -int(signal), mac.upper())
+                          for _, mac, signal, sec, name in visible()
+                          if (sec, name) == (security, ssid)]
+            if candidates:
+                last, _, target = min(candidates)
+                if last >= 0 and now - last < 25:
+                    return False
+                args = ACTIVATE[:5] + ['connection', 'up', 'uuid', uuid,
+                                        'ifname', INTERFACE, 'ap', target]
+        # Recheck after reading the cache: don't interrupt native activation.
+        if os.path.exists(PAUSE) or wifi_state() != 'disconnected':
+            return False
+        self.log(f'NET_RECOVERY request target={target or "automatic"}')
+        rc, _ = run(args, 14)
+        end = self.clock()
+        if target:
+            self.tried[target] = end
+        # Keep polling between attempts. Continue slowly after the fast window
+        # so a timed-out experiment does not leave the robot unreachable.
+        delay = 60 if end - self.started >= 90 else (7 if target else 25)
+        self.next_at = end + delay
+        self.log(f'NET_RECOVERY result rc={rc}; next eligible in {delay}s')
+        return True
