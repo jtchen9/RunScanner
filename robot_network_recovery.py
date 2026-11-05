@@ -4,6 +4,9 @@ No background thread, motion commands, daemon restarts, or command replay.
 Recovery resets only after a successful NMS poll, not after nmcli succeeds.
 """
 import re
+import ipaddress
+import json
+import shutil
 import os
 import subprocess
 import time
@@ -25,6 +28,35 @@ def run(argv, timeout):
         return 124, ''
 
 
+def ipv4_ready():
+    """True: usable IPv4 exists; False: none; None: inspection failed.
+
+    Read kernel addresses, not NetworkManager's high-level connected flag.
+    Private LAN addresses are valid. Link-local/loopback addresses are not.
+    """
+    ip = shutil.which('ip', path='/usr/sbin:/usr/bin:/sbin:/bin')
+    if not ip:
+        return None
+    rc, out = run([ip, '-j', '-4', 'address', 'show', 'dev', INTERFACE], 2)
+    if rc:
+        return None
+    try:
+        devices = json.loads(out)
+        if not isinstance(devices, list) or not devices:
+            return None
+        for device in devices:
+            for addr in device.get('addr_info', []):
+                if addr.get('family') != 'inet':
+                    continue
+                value = ipaddress.IPv4Address(addr['local'])
+                if not (value.is_link_local or value.is_loopback or
+                        value.is_unspecified or value.is_multicast):
+                    return True
+        return False
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
 def wifi_state(timeout=2):
     rc, state = run(['/usr/bin/nmcli', '-g', 'GENERAL.STATE',
                      'device', 'show', INTERFACE], timeout)
@@ -32,7 +64,8 @@ def wifi_state(timeout=2):
         return 'unknown'
     code = state.split(' ', 1)[0]
     if code == '100':
-        return 'connected'
+        ready = ipv4_ready()
+        return ('connected' if ready else 'no-ipv4') if ready is not None else 'unknown'
     if code in ('30', '120'):
         return 'disconnected'
     if code in ('40', '50', '60', '70', '80', '90'):
@@ -96,10 +129,10 @@ class NetworkRecovery:
         if now < self.next_at or os.path.exists(PAUSE):
             return False
         state = wifi_state()
-        if state == 'activating':
+        if state in ('activating', 'no-ipv4'):
             if self.activating_since is None:
                 self.activating_since = now
-                self.log('NET_RECOVERY native activation: allow 25s before intervention')
+                self.log(f'NET_RECOVERY state={state}: allow 25s for native IP recovery')
             if now - self.activating_since < 25:
                 return False
         else:
@@ -125,11 +158,11 @@ class NetworkRecovery:
                         '/usr/local/libexec/scanner-wifi-activate', uuid, target]
         # Without a remembered profile, do not cancel an ongoing activation.
         current = wifi_state()
-        if os.path.exists(PAUSE) or current not in ('disconnected', 'activating'):
+        if os.path.exists(PAUSE) or current not in ('disconnected', 'activating', 'no-ipv4'):
             return False
-        if current == 'activating' and (state != 'activating' or not target):
+        if current in ('activating', 'no-ipv4') and (state not in ('activating', 'no-ipv4') or not target):
             return False
-        self.log(f'NET_RECOVERY request target={target or "automatic"}')
+        self.log(f'NET_RECOVERY state={current} request target={target or "automatic"}')
         rc, output = run(args, 90 if target else 14)
         end = self.clock()
         if target:

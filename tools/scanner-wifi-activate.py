@@ -4,6 +4,8 @@ Install at /usr/local/libexec/scanner-wifi-activate (root:root, 0755).
 Only an in-memory profile override is used; disk profiles are untouched.
 """
 import fcntl
+import ipaddress
+import json
 import os
 import re
 import shutil
@@ -24,6 +26,35 @@ def run(args, timeout=3):
         return p.returncode, p.stdout.strip()
     except (OSError, subprocess.TimeoutExpired):
         return 124, ''
+
+def ipv4_ready():
+    """True: usable IPv4 exists; False: none; None: inspection failed.
+
+    Read kernel addresses, not NetworkManager's high-level connected flag.
+    Private LAN addresses are valid. Link-local/loopback addresses are not.
+    """
+    ip = shutil.which('ip', path='/usr/sbin:/usr/bin:/sbin:/bin')
+    if not ip:
+        return None
+    rc, out = run([ip, '-j', '-4', 'address', 'show', 'dev', IFACE], 2)
+    if rc:
+        return None
+    try:
+        devices = json.loads(out)
+        if not isinstance(devices, list) or not devices:
+            return None
+        for device in devices:
+            for addr in device.get('addr_info', []):
+                if addr.get('family') != 'inet':
+                    continue
+                value = ipaddress.IPv4Address(addr['local'])
+                if not (value.is_link_local or value.is_loopback or
+                        value.is_unspecified or value.is_multicast):
+                    return True
+        return False
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
 
 def field(uuid, name):
     rc, value = run([NM, '-g', name, 'connection', 'show', 'uuid', uuid])
@@ -50,7 +81,10 @@ def activate(uuid, target):
         print('helper-error=profile-restriction')
         return 2
     rc, state = run([NM, '-g', 'GENERAL.STATE', 'device', 'show', IFACE])
-    if rc or state.split(' ', 1)[0] not in ('30', '40', '50', '60', '70', '80', '90', '120'):
+    code = state.split(' ', 1)[0]
+    # Recheck the observed missing-IP condition before disrupting any link.
+    missing_ip = code == '100' and ipv4_ready() is False
+    if rc or (code not in ('30', '40', '50', '60', '70', '80', '90', '120') and not missing_ip):
         print('helper-skip=state-changed')
         return 3
     # Cancel a stale activation and suppress automatic competing activation.
@@ -60,6 +94,7 @@ def activate(uuid, target):
     modified = False
     result = 4
     actual = 'none'
+    ip_ready = None
     try:
         # Mark before call so even a timeout triggers restoration.
         modified = True
@@ -70,7 +105,9 @@ def activate(uuid, target):
                      'ifname', IFACE], 12)
         s = status(wpa)
         actual = s.get('bssid', 'none').upper()
-        result = 0 if rc == 0 and s.get('wpa_state') == 'COMPLETED' and actual == target.upper() else 4
+        ip_ready = ipv4_ready()
+        result = 0 if (rc == 0 and s.get('wpa_state') == 'COMPLETED'
+                       and actual == target.upper() and ip_ready is True) else 4
         if result:
             # nmcli --wait limits the client, not the activation itself.
             run([NM, '--wait', '3', 'device', 'disconnect', IFACE], 4)
@@ -92,7 +129,7 @@ def activate(uuid, target):
             # Never leave a silently pinned live connection.
             run([NM, '--wait', '3', 'device', 'disconnect', IFACE], 4)
             result = 5
-    print(f'helper-result requested={target.upper()} actual={actual} rc={result} roaming_released={int(released)}')
+    print(f'helper-result requested={target.upper()} actual={actual} rc={result} ipv4={ip_ready} roaming_released={int(released)}')
     return result
 
 def main():

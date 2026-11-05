@@ -64,7 +64,7 @@ class HelperTests(unittest.TestCase):
             if 'bssid' in args: return 0, 'OK'
             return 0, ''
         fields = {'connection.type':'802-11-wireless', 'connection.interface-name':'wlP1p1s0', '802-11-wireless.bssid':''}
-        with patch.object(h.shutil, 'which', return_value='/usr/sbin/wpa_cli'), patch.object(h, 'field', side_effect=lambda u,k: fields[k]), patch.object(h, 'run', side_effect=command), patch.object(h, 'status', return_value={'wpa_state':'COMPLETED', 'bssid':actual, 'id':'0'}):
+        with patch.object(h.shutil, 'which', return_value='/usr/sbin/wpa_cli'), patch.object(h, 'field', side_effect=lambda u,k: fields[k]), patch.object(h, 'run', side_effect=command), patch.object(h, 'status', return_value={'wpa_state':'COMPLETED', 'bssid':actual, 'id':'0'}), patch.object(h, 'ipv4_ready', return_value=True):
             try:
                 result = h.activate(UID, ROWS[0][1])
             except RuntimeError:
@@ -91,6 +91,74 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(rc, 4)
         self.assertTrue(any('modify' in c and c[-1] == '' for c in calls))
         self.assertFalse(any('up' in c for c in calls))
+
+class MissingIPTests(unittest.TestCase):
+    def test_kernel_address_results_agent_and_helper(self):
+        # The root helper independently verifies the same condition.
+        samples = [
+            ('[{"addr_info": []}]', False),
+            ('[{"addr_info": [{"family":"inet", "local":"192.168.11.125"}]}]', True),
+            ('[{"addr_info": [{"family":"inet", "local":"169.254.1.2"}]}]', False),
+            ('malformed', None),
+            ('[]', None),
+        ]
+        for module in (r, h):
+            for raw, expected in samples:
+                with self.subTest(module=module.__name__, raw=raw), patch.object(module.shutil, 'which', return_value='/usr/sbin/ip'), patch.object(module, 'run', return_value=(0, raw)):
+                    self.assertIs(module.ipv4_ready(), expected)
+            with patch.object(module.shutil, 'which', return_value='/usr/sbin/ip'), patch.object(module, 'run', return_value=(124, '')):
+                self.assertIsNone(module.ipv4_ready())
+
+    def test_connected_state_is_not_enough(self):
+        with patch.object(r, 'run', return_value=(0, '100 (connected)')):
+            for ready, state in ((True, 'connected'), (False, 'no-ipv4'), (None, 'unknown')):
+                with patch.object(r, 'ipv4_ready', return_value=ready):
+                    self.assertEqual(r.wifi_state(), state)
+
+    def test_missing_ip_wait_survives_roaming(self):
+        now = [0]
+        recovery = r.NetworkRecovery(lambda _: None, clock=lambda: now[0])
+        recovery.context = UID, 'WPA3', 'test'
+        recovery.cached = ROWS
+        with patch.object(r.os.path, 'exists', return_value=False), patch.object(r, 'visible', return_value=[]), patch.object(r, 'wifi_state', return_value='no-ipv4') as state, patch.object(r, 'run', return_value=(4, '')) as run:
+            recovery.failed('NMS discovery failed')
+            now[0] = 5; self.assertFalse(recovery.failed('NMS discovery failed'))
+            # Native roaming changes state, but does not restart the grace timer.
+            state.return_value = 'activating'
+            now[0] = 20; self.assertFalse(recovery.failed('NMS discovery failed'))
+            state.return_value = 'no-ipv4'
+            now[0] = 30; self.assertTrue(recovery.failed('NMS discovery failed'))
+            run.assert_called_once()
+
+    def test_ip_returns_during_grace_no_reconnect(self):
+        now = [0]
+        recovery = r.NetworkRecovery(lambda _: None, clock=lambda: now[0])
+        with patch.object(r.os.path, 'exists', return_value=False), patch.object(r, 'wifi_state', return_value='no-ipv4') as state, patch.object(r, 'run') as run:
+            recovery.failed('test'); now[0] = 5; recovery.failed('test')
+            state.return_value = 'connected'; now[0] = 30
+            self.assertFalse(recovery.failed('test')); run.assert_not_called()
+
+    def test_root_helper_protects_restored_ip(self):
+        def command(args, timeout=3):
+            if args[-1] == 'ping': return 0, 'PONG'
+            if 'GENERAL.STATE' in args: return 0, '100 (connected)'
+            return 0, ''
+        fields = {'connection.type':'802-11-wireless', 'connection.interface-name':'wlP1p1s0', '802-11-wireless.bssid':''}
+        for ready in (True, None):
+            with patch.object(h.shutil, 'which', return_value='/usr/sbin/wpa_cli'), patch.object(h, 'field', side_effect=lambda u,k: fields[k]), patch.object(h, 'run', side_effect=command) as run, patch.object(h, 'ipv4_ready', return_value=ready):
+                self.assertEqual(h.activate(UID, ROWS[0][1]), 3)
+                self.assertFalse(any('disconnect' in c.args[0] for c in run.call_args_list))
+
+    def test_root_helper_recovers_missing_ip_and_requires_ip_on_success(self):
+        fields = {'connection.type':'802-11-wireless', 'connection.interface-name':'wlP1p1s0', '802-11-wireless.bssid':''}
+        def command(args, timeout=3):
+            if args[-1] == 'ping': return 0, 'PONG'
+            if 'GENERAL.STATE' in args: return 0, '100 (connected)'
+            if 'bssid' in args: return 0, 'OK'
+            return 0, ''
+        for after, expected in ((True, 0), (False, 4), (None, 4)):
+            with patch.object(h.shutil, 'which', return_value='/usr/sbin/wpa_cli'), patch.object(h, 'field', side_effect=lambda u,k: fields[k]), patch.object(h, 'run', side_effect=command), patch.object(h, 'ipv4_ready', side_effect=[False, after]), patch.object(h, 'status', return_value={'wpa_state':'COMPLETED', 'bssid':ROWS[0][1], 'id':'0'}):
+                self.assertEqual(h.activate(UID, ROWS[0][1]), expected)
 
 if __name__ == '__main__':
     unittest.main()
