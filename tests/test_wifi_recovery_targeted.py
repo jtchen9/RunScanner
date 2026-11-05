@@ -80,12 +80,12 @@ class HelperTests(unittest.TestCase):
     def test_wrong_ap_is_failure(self):
         rc, calls = self.execute(ROWS[1][1])
         self.assertEqual(rc, 4)
-        self.assertEqual(len([c for c in calls if 'disconnect' in c]), 2)
+        self.assertEqual(len([c for c in calls if 'disconnect' in c]), 1)
     def test_activation_timeout_cancels_and_restores(self):
         rc, calls = self.execute(ROWS[0][1], activation_rc=124)
         self.assertEqual(rc, 4)
         self.assertTrue(any('modify' in c and c[-1] == '' for c in calls))
-        self.assertEqual(len([c for c in calls if 'disconnect' in c]), 2)
+        self.assertEqual(len([c for c in calls if 'disconnect' in c]), 1)
     def test_pin_timeout_still_restores(self):
         rc, calls = self.execute(ROWS[0][1], pin_rc=124)
         self.assertEqual(rc, 4)
@@ -153,12 +153,65 @@ class MissingIPTests(unittest.TestCase):
         fields = {'connection.type':'802-11-wireless', 'connection.interface-name':'wlP1p1s0', '802-11-wireless.bssid':''}
         def command(args, timeout=3):
             if args[-1] == 'ping': return 0, 'PONG'
-            if 'GENERAL.STATE' in args: return 0, '100 (connected)'
+            if 'GENERAL.STATE' in args: return 0, next(states)
             if 'bssid' in args: return 0, 'OK'
             return 0, ''
         for after, expected in ((True, 0), (False, 4), (None, 4)):
+            states = iter(['100 (connected)', '30 (disconnected)'])
             with patch.object(h.shutil, 'which', return_value='/usr/sbin/wpa_cli'), patch.object(h, 'field', side_effect=lambda u,k: fields[k]), patch.object(h, 'run', side_effect=command), patch.object(h, 'ipv4_ready', side_effect=[False, after]), patch.object(h, 'status', return_value={'wpa_state':'COMPLETED', 'bssid':ROWS[0][1], 'id':'0'}):
                 self.assertEqual(h.activate(UID, ROWS[0][1]), expected)
+
+class CancellationRegressionTests(unittest.TestCase):
+    def invoke(self, initial='30', after='30', cancel_rc=10, activation_rc=0, state_rc=0):
+        calls = []
+        states = iter([initial, after])
+        def command(args, timeout=3):
+            calls.append(args)
+            if args[-1] == 'ping': return 0, 'PONG'
+            if 'GENERAL.STATE' in args:
+                value = next(states)
+                return (state_rc if len([c for c in calls if 'GENERAL.STATE' in c]) > 1 else 0), value
+            if 'disconnect' in args: return cancel_rc, ''
+            if 'up' in args: return activation_rc, ''
+            if 'bssid' in args: return 0, 'OK'
+            return 0, ''
+        fields = {'connection.type':'802-11-wireless', 'connection.interface-name':'wlP1p1s0', '802-11-wireless.bssid':''}
+        with patch.object(h.shutil, 'which', return_value='/usr/sbin/wpa_cli'), patch.object(h, 'field', side_effect=lambda u,k: fields[k]), patch.object(h, 'run', side_effect=command), patch.object(h, 'ipv4_ready', return_value=True), patch.object(h, 'status', return_value={'wpa_state':'COMPLETED', 'bssid':ROWS[0][1], 'id':'0'}):
+            result = h.activate(UID, ROWS[0][1])
+        return result, calls
+
+    def test_already_disconnected_skips_cancel_and_activates(self):
+        for state in ('30', '120'):
+            rc, calls = self.invoke(initial=state)
+            self.assertEqual(rc, 0)
+            self.assertFalse(any('disconnect' in c for c in calls))
+            self.assertTrue(any('up' in c for c in calls))
+
+    def test_cancel_error_but_disconnected_can_activate(self):
+        rc, calls = self.invoke(initial='60', after='30', cancel_rc=10)
+        self.assertEqual(rc, 0)
+        self.assertTrue(any('up' in c for c in calls))
+
+    def test_cancel_success_but_still_active_must_not_activate(self):
+        for after in ('60', '100', '110'):
+            rc, calls = self.invoke(initial='60', after=after, cancel_rc=0)
+            self.assertEqual(rc, 4)
+            self.assertFalse(any('up' in c or 'modify' in c for c in calls))
+
+    def test_cancel_state_query_failure_must_not_activate(self):
+        rc, calls = self.invoke(initial='60', state_rc=124)
+        self.assertEqual(rc, 4)
+        self.assertFalse(any('up' in c for c in calls))
+
+    def test_rejected_activation_does_not_block_next_disconnected_attempt(self):
+        rc, calls = self.invoke(initial='60', activation_rc=4)
+        self.assertEqual(rc, 4)
+        self.assertTrue(any('modify' in c and c[-1] == '' for c in calls))
+        # Next watchdog call must reach activation despite disconnect returning
+        # nonzero for an already-disconnected device, as in the captured outage.
+        rc, calls = self.invoke(initial='30', cancel_rc=10)
+        self.assertEqual(rc, 0)
+        self.assertTrue(any('up' in c for c in calls))
 
 if __name__ == '__main__':
     unittest.main()

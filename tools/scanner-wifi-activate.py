@@ -87,10 +87,16 @@ def activate(uuid, target):
     if rc or (code not in ('30', '40', '50', '60', '70', '80', '90', '120') and not missing_ip):
         print('helper-skip=state-changed')
         return 3
-    # Cancel a stale activation and suppress automatic competing activation.
-    if run([NM, '--wait', '3', 'device', 'disconnect', IFACE], 4)[0]:
-        print('helper-error=cancel-failed')
-        return 4
+    # Already disconnected is a valid starting point, not a cancellation error.
+    if code not in ('30', '120'):
+        cancel_rc, _ = run([NM, '--wait', '3', 'device', 'disconnect', IFACE], 4)
+        state_rc, after = run([NM, '-g', 'GENERAL.STATE', 'device', 'show', IFACE])
+        after_code = after.split(' ', 1)[0]
+        # Judge the resulting state even when nmcli reports an error (a native
+        # disconnect may have completed before our cancellation request).
+        if state_rc or after_code not in ('30', '120'):
+            print(f'helper-error=cancel-failed cancel_rc={cancel_rc} state_rc={state_rc} state={after_code if after_code.isdigit() else "unknown"}')
+            return 4
     modified = False
     result = 4
     actual = 'none'

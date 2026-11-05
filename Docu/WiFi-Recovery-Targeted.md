@@ -1,11 +1,22 @@
-# Wi-Fi recovery: missing IPv4 correction (Alpha pilot)
+# Wi-Fi recovery: cancellation correction (Alpha pilot)
 
 This is the current guide, replacing the earlier targeted-recovery guide.
-Apply Robot-WiFi-Recovery-ipv4-from-targeted.patch on top of the already
-installed Robot-WiFi-Recovery-targeted-from-paced.patch. Do not reverse or
+Apply Robot-WiFi-Recovery-cancel-fix.patch on top of the already
+installed Robot-WiFi-Recovery-ipv4-from-targeted.patch. Do not reverse or
 reapply earlier patches. Existing robot_agent.py integration stays unchanged.
 
-## What changed, and what was removed
+## Cancellation correction
+
+The 11:01-11:10 capture showed the helper repeatedly aborting with
+cancel-failed before reaching activation because the interface was already
+disconnected. The helper now skips cancellation for states 30/120. For an
+ongoing activation or missing-IP connection it cancels, then verifies the
+resulting state. A nonzero cancel return is acceptable only if the new state
+is confirmed disconnected/failed. Unknown or active state prevents activation.
+This replaces the faulty prerequisite; no service, permission, retry timer,
+or network profile configuration is added.
+
+## Previous IPv4 correction retained
 
 - Replaced the unconditional NetworkManager state-100 exemption. State 100
   now reads kernel IPv4 addresses: no usable IPv4 is a recoverable condition.
@@ -81,10 +92,12 @@ The sudoers content and privileges are unchanged by this revision.
 
 ## Verification and pilot
 
-15 mocked tests pass, including the previous target-rotation/cleanup tests and
+20 mocked tests pass, including the previous target-rotation/cleanup tests and
 new tests for missing IPv4, malformed/failed inspection, grace across roaming,
 address recovery before intervention, helper race protection, and IPv4-required
-activation success. Shell syntax was checked. Run tests from the repo root:
+activation success. Five additional regression tests cover already-disconnected retry, cancellation
+errors with completed disconnection, cancellation success with an active state,
+state inspection failure, and retry after rejected activation. Run tests from the repo root:
 
 ```sh
 python3 -m unittest discover -s tests -p test_wifi_recovery_targeted.py
@@ -103,14 +116,7 @@ stop the pilot and preserve logs before further changes.
 
 ## Rollback
 
-Reverse only Robot-WiFi-Recovery-ipv4-from-targeted.patch in the shared repo,
-commit and pull. This restores the previous two Python files, test and guide,
-and removes this installer. Reinstall the restored helper with:
-
-```sh
-sudo install -o root -g root -m 755 tools/scanner-wifi-activate.py /usr/local/libexec/scanner-wifi-activate
-sudo systemctl restart scanner-agent
-```
-
-Perform rollback between tests with no recovery attempt in flight. Sudoers is
-unchanged. The installer does not create additional services or profile files.
+Reverse only Robot-WiFi-Recovery-cancel-fix.patch in the shared repository,
+commit and pull. Then run sudo bash tools/install_wifi_recovery.sh to restore
+the installed helper. This returns the previous version, including its known
+cancel-failed defect; use it only to isolate an unexpected regression.
