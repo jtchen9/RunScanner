@@ -1,3 +1,3 @@
-# Exact activation only. No arbitrary nmcli commands, shell, or password access.
+# Install helper root:root 0755 before enabling this permission.
+pi ALL=(root) NOPASSWD: /usr/local/libexec/scanner-wifi-activate *
 pi ALL=(root) NOPASSWD: /usr/bin/nmcli --wait 12 connection up ifname wlP1p1s0
-pi ALL=(root) NOPASSWD: /usr/bin/nmcli --wait 12 connection up uuid [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]-[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F] ifname wlP1p1s0 ap [0-9a-fA-F][0-9a-fA-F]\:[0-9a-fA-F][0-9a-fA-F]\:[0-9a-fA-F][0-9a-fA-F]\:[0-9a-fA-F][0-9a-fA-F]\:[0-9a-fA-F][0-9a-fA-F]\:[0-9a-fA-F][0-9a-fA-F]

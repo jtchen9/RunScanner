@@ -1,7 +1,7 @@
 """Bounded, failure-triggered Wi-Fi recovery owned by scanner-agent only.
 
 No background thread, motion commands, daemon restarts, or command replay.
-Budget resets only after a successful NMS poll, not after nmcli succeeds.
+Recovery resets only after a successful NMS poll, not after nmcli succeeds.
 """
 import re
 import os
@@ -35,6 +35,8 @@ def wifi_state(timeout=2):
         return 'connected'
     if code in ('30', '120'):
         return 'disconnected'
+    if code in ('40', '50', '60', '70', '80', '90'):
+        return 'activating'
     # Missing, unmanaged, unavailable, or deactivating: do not override intent.
     return 'unknown'
 
@@ -63,6 +65,8 @@ class NetworkRecovery:
         self.started = None
         self.next_at = 0
         self.tried = {}
+        self.cached = []
+        self.activating_since = None
 
     def nms_ok(self):
         now = self.clock()
@@ -71,14 +75,17 @@ class NetworkRecovery:
             self.refresh_at = 0
         self.started = None
         self.tried.clear()
+        self.activating_since = None
         if now < self.refresh_at:
             return
         self.refresh_at = now + 30
         rc, uuid = run(['/usr/bin/nmcli', '-g', 'GENERAL.CON-UUID',
                         'device', 'show', INTERFACE], 2)
-        active = next((row for row in visible() if row[0] == '*'), None)
-        self.context = ((uuid, active[3], active[4]) if active and active[4]
-                        and not rc and re.fullmatch(UUID, uuid) else None)
+        rows = visible()
+        active = next((row for row in rows if row[0] == '*'), None)
+        if active and active[4] and not rc and re.fullmatch(UUID, uuid):
+            self.context = (uuid, active[3], active[4])
+            self.cached = rows
 
     def failed(self, reason):
         now = self.clock()
@@ -88,32 +95,53 @@ class NetworkRecovery:
             self.log(f'NET_RECOVERY outage detected: {reason}')
         if now < self.next_at or os.path.exists(PAUSE):
             return False
-        if wifi_state() != 'disconnected':
-            return False
+        state = wifi_state()
+        if state == 'activating':
+            if self.activating_since is None:
+                self.activating_since = now
+                self.log('NET_RECOVERY native activation: allow 25s before intervention')
+            if now - self.activating_since < 25:
+                return False
+        else:
+            self.activating_since = None
+            if state != 'disconnected':
+                return False
         target = None
         args = ACTIVATE
         if self.context:
             uuid, security, ssid = self.context
+            # Keep the last healthy scan as fallback when an outage empties cache.
+            rows = {r[1].upper(): r for r in self.cached}
+            rows.update({r[1].upper(): r for r in visible()})
             candidates = [(self.tried.get(mac.upper(), -1), -int(signal), mac.upper())
-                          for _, mac, signal, sec, name in visible()
+                          for _, mac, signal, sec, name in rows.values()
                           if (sec, name) == (security, ssid)]
             if candidates:
                 last, _, target = min(candidates)
-                if last >= 0 and now - last < 25:
+                if last >= 0 and now - last < 30:
+                    self.next_at = last + 30
                     return False
-                args = ACTIVATE[:5] + ['connection', 'up', 'uuid', uuid,
-                                        'ifname', INTERFACE, 'ap', target]
-        # Recheck after reading the cache: don't interrupt native activation.
-        if os.path.exists(PAUSE) or wifi_state() != 'disconnected':
+                args = ['/usr/bin/sudo', '-n',
+                        '/usr/local/libexec/scanner-wifi-activate', uuid, target]
+        # Without a remembered profile, do not cancel an ongoing activation.
+        current = wifi_state()
+        if os.path.exists(PAUSE) or current not in ('disconnected', 'activating'):
+            return False
+        if current == 'activating' and (state != 'activating' or not target):
             return False
         self.log(f'NET_RECOVERY request target={target or "automatic"}')
-        rc, _ = run(args, 14)
+        rc, output = run(args, 90 if target else 14)
         end = self.clock()
         if target:
             self.tried[target] = end
-        # Keep polling between attempts. Continue slowly after the fast window
-        # so a timed-out experiment does not leave the robot unreachable.
-        delay = 60 if end - self.started >= 90 else (7 if target else 25)
+        self.activating_since = None
+        # Exhaust alternatives before revisiting an AP. No age-based 60s delay.
+        delay = 5 if target else 25
         self.next_at = end + delay
-        self.log(f'NET_RECOVERY result rc={rc}; next eligible in {delay}s')
+        # Helper output is deliberately restricted to identifiers and outcomes.
+        if target:
+            for line in output.splitlines():
+                if line.startswith(('helper-result ', 'helper-error=', 'helper-skip=')):
+                    self.log('NET_RECOVERY ' + line)
+        self.log(f'NET_RECOVERY result rc={rc}; next eligible in {delay}s; no command replay')
         return True
