@@ -41,7 +41,7 @@ def ipv4_ready():
         return None
     try:
         devices = json.loads(out)
-        if not isinstance(devices, list) or not devices:
+        if not isinstance(devices, list):
             return None
         for device in devices:
             for addr in device.get('addr_info', []):
@@ -69,7 +69,7 @@ def status(wpa):
 def interrupted(signum, frame):
     raise RuntimeError('interrupted')
 
-def activate(uuid, target):
+def activate(uuid, target, nms_unreachable=False):
     wpa = shutil.which('wpa_cli', path='/usr/sbin:/usr/bin:/sbin:/bin')
     if not wpa or run([wpa, '-i', IFACE, 'ping'])[1] != 'PONG':
         print('helper-error=wpa-control-unavailable')
@@ -82,9 +82,11 @@ def activate(uuid, target):
         return 2
     rc, state = run([NM, '-g', 'GENERAL.STATE', 'device', 'show', IFACE])
     code = state.split(' ', 1)[0]
-    # Recheck the observed missing-IP condition before disrupting any link.
+    # Recheck missing IP; an explicit agent mode also permits recovery of a
+    # retained-IP link after prolonged NMS transport failure.
     missing_ip = code == '100' and ipv4_ready() is False
-    if rc or (code not in ('30', '40', '50', '60', '70', '80', '90', '120') and not missing_ip):
+    stale_path = code == '100' and nms_unreachable
+    if rc or (code not in ('30', '40', '50', '60', '70', '80', '90', '120') and not missing_ip and not stale_path):
         print('helper-skip=state-changed')
         return 3
     # Already disconnected is a valid starting point, not a cancellation error.
@@ -138,8 +140,19 @@ def activate(uuid, target):
     print(f'helper-result requested={target.upper()} actual={actual} rc={result} ipv4={ip_ready} roaming_released={int(released)}')
     return result
 
+def rescan():
+    rc, state = run([NM, '-g', 'GENERAL.STATE', 'device', 'show', IFACE])
+    if rc or state.split(' ', 1)[0] not in ('30', '100', '120'):
+        return 3
+    return run([NM, '--wait', '3', 'device', 'wifi', 'rescan', 'ifname', IFACE], 4)[0]
+
+
 def main():
-    if os.geteuid() != 0 or len(sys.argv) != 3 or not re.fullmatch(UUID, sys.argv[1]) or not re.fullmatch(MAC, sys.argv[2]):
+    scanning = sys.argv[1:] == ['--rescan']
+    activating = (len(sys.argv) in (3, 4) and re.fullmatch(UUID, sys.argv[1])
+                  and re.fullmatch(MAC, sys.argv[2])
+                  and (len(sys.argv) == 3 or sys.argv[3] == 'nms-unreachable'))
+    if os.geteuid() != 0 or not (scanning or activating):
         return 2
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)
@@ -149,7 +162,10 @@ def main():
         except BlockingIOError:
             return 3
         try:
-            return activate(*sys.argv[1:])
+            if os.path.exists('/run/robot-network-recovery.pause'):
+                print('helper-skip=paused')
+                return 3
+            return rescan() if scanning else activate(sys.argv[1], sys.argv[2], len(sys.argv) == 4)
         except Exception:
             print('helper-error=operation-failed')
             return 4

@@ -17,6 +17,7 @@ class RecoveryTests(unittest.TestCase):
         self.r = r.NetworkRecovery(self.messages.append, clock=lambda: self.t)
         self.r.context = UID, 'WPA3', 'test'
         self.r.cached = ROWS
+        self.r.scan_at = 10000
         self.pause = patch.object(r.os.path, 'exists', return_value=False); self.pause.start()
         self.scan = patch.object(r, 'visible', return_value=[]); self.scan.start()
     def tearDown(self):
@@ -36,10 +37,15 @@ class RecoveryTests(unittest.TestCase):
             self.t = 29; self.assertFalse(self.r.failed('test'))
             self.t = 30; self.assertTrue(self.r.failed('test'))
             run.assert_called_once()
-    def test_healthy_wifi_not_reset_for_nms_outage(self):
-        with patch.object(r, 'wifi_state', return_value='connected'), patch.object(r, 'run') as run:
-            self.r.failed('test'); self.t = 300
+    def test_connected_nms_outage_is_paced_and_rotates(self):
+        with patch.object(r, 'wifi_state', return_value='connected'), patch.object(r, 'run', return_value=(0, '')) as run:
+            self.r.failed('test'); self.t = 29
             self.assertFalse(self.r.failed('test')); run.assert_not_called()
+            self.t = 30; self.assertTrue(self.r.failed('test'))
+            self.assertEqual(run.call_args.args[0][-2:], [ROWS[0][1], 'nms-unreachable'])
+            self.t = 59; self.assertFalse(self.r.failed('test'))
+            self.t = 60; self.assertTrue(self.r.failed('test'))
+            self.assertEqual(run.call_args.args[0][-2:], [ROWS[1][1], 'nms-unreachable'])
     def test_pause_and_connection_race(self):
         self.r.failed('test'); self.t = 10
         with patch.object(r, 'wifi_state', side_effect=['disconnected', 'connected']), patch.object(r, 'run') as run:
@@ -100,7 +106,7 @@ class MissingIPTests(unittest.TestCase):
             ('[{"addr_info": [{"family":"inet", "local":"192.168.11.125"}]}]', True),
             ('[{"addr_info": [{"family":"inet", "local":"169.254.1.2"}]}]', False),
             ('malformed', None),
-            ('[]', None),
+            ('[]', False),
         ]
         for module in (r, h):
             for raw, expected in samples:
@@ -118,6 +124,7 @@ class MissingIPTests(unittest.TestCase):
     def test_missing_ip_wait_survives_roaming(self):
         now = [0]
         recovery = r.NetworkRecovery(lambda _: None, clock=lambda: now[0])
+        recovery.scan_at = 10000
         recovery.context = UID, 'WPA3', 'test'
         recovery.cached = ROWS
         with patch.object(r.os.path, 'exists', return_value=False), patch.object(r, 'visible', return_value=[]), patch.object(r, 'wifi_state', return_value='no-ipv4') as state, patch.object(r, 'run', return_value=(4, '')) as run:
@@ -133,6 +140,8 @@ class MissingIPTests(unittest.TestCase):
     def test_ip_returns_during_grace_no_reconnect(self):
         now = [0]
         recovery = r.NetworkRecovery(lambda _: None, clock=lambda: now[0])
+        recovery.context = UID, 'WPA3', 'test'
+        recovery.scan_at = 10000
         with patch.object(r.os.path, 'exists', return_value=False), patch.object(r, 'wifi_state', return_value='no-ipv4') as state, patch.object(r, 'run') as run:
             recovery.failed('test'); now[0] = 5; recovery.failed('test')
             state.return_value = 'connected'; now[0] = 30
@@ -212,6 +221,91 @@ class CancellationRegressionTests(unittest.TestCase):
         rc, calls = self.invoke(initial='30', cancel_rc=10)
         self.assertEqual(rc, 0)
         self.assertTrue(any('up' in c for c in calls))
+
+class OutageRegressionTests(unittest.TestCase):
+    def test_empty_ipv4_does_not_become_unknown(self):
+        def command(args, timeout):
+            return (0, '100 (connected)') if 'GENERAL.STATE' in args else (0, '[]')
+        with patch.object(r, 'run', side_effect=command), patch.object(r.shutil, 'which', return_value='/usr/sbin/ip'):
+            self.assertEqual(r.wifi_state(), 'no-ipv4')
+
+    def profile_command(self, active=UID, profiles=None):
+        def command(args, timeout):
+            if 'GENERAL.CON-UUID' in args: return 0, active
+            if args[2] == 'UUID': return 0, '\n'.join(profiles or [UID])
+            return 0, '802-11-wireless\nwlP1p1s0\nyes\n\ntest'
+        return command
+
+    def test_restart_context_without_nms_or_ipv4(self):
+        recovery = r.NetworkRecovery(lambda _: None, clock=lambda: 0)
+        with patch.object(r, 'run', side_effect=self.profile_command()), patch.object(r, 'visible', return_value=ROWS):
+            recovery.restore_context()
+        self.assertEqual(recovery.context, (UID, '', 'test'))
+
+    def test_disconnected_unique_profile_and_ambiguous_profiles(self):
+        for profiles, expected in (([UID], (UID, '', 'test')), ([UID, '22345678-1234-1234-1234-123456789abc'], None)):
+            recovery = r.NetworkRecovery(lambda _: None, clock=lambda: 0)
+            with patch.object(r, 'run', side_effect=self.profile_command('--', profiles)), patch.object(r, 'visible', return_value=ROWS):
+                recovery.restore_context()
+            self.assertEqual(recovery.context, expected)
+
+    def test_restricted_profile_not_adopted(self):
+        recovery = r.NetworkRecovery(lambda _: None, clock=lambda: 0)
+        def command(args, timeout):
+            if 'GENERAL.CON-UUID' in args: return 0, UID
+            return 0, '802-11-wireless\nwlP1p1s0\nyes\nAA:BB:CC:DD:EE:00\ntest'
+        with patch.object(r, 'run', side_effect=command):
+            recovery.restore_context()
+        self.assertIsNone(recovery.context)
+
+    def test_unknown_is_logged_and_does_not_reset_activation_grace(self):
+        now = [0]; messages = []
+        recovery = r.NetworkRecovery(messages.append, clock=lambda: now[0])
+        recovery.context = UID, 'WPA3', 'test'; recovery.cached = ROWS; recovery.scan_at = 9999
+        with patch.object(r.os.path, 'exists', return_value=False), patch.object(r, 'visible', return_value=[]), patch.object(r, 'wifi_state', return_value='no-ipv4') as state, patch.object(r, 'run', return_value=(0, '')) as run:
+            recovery.failed('test'); now[0] = 5; recovery.failed('test')
+            state.return_value = 'unknown'; now[0] = 20; recovery.failed('test')
+            state.return_value = 'no-ipv4'; now[0] = 30
+            self.assertTrue(recovery.failed('test'))
+            self.assertTrue(any('inspection failed' in m for m in messages))
+
+    def test_scan_is_paced_and_new_candidate_used(self):
+        now = [0]
+        recovery = r.NetworkRecovery(lambda _: None, clock=lambda: now[0])
+        recovery.context = UID, 'WPA3', 'test'
+        with patch.object(r.os.path, 'exists', return_value=False), patch.object(r, 'visible', return_value=[ROWS[2]]), patch.object(r, 'wifi_state', return_value='disconnected'), patch.object(r, 'run', return_value=(0, '')) as run:
+            recovery.failed('test'); now[0] = 5; recovery.failed('test')
+            self.assertEqual(run.call_args.args[0][-1], ROWS[2][1])
+            now[0] = 40; recovery.failed('test')
+            self.assertEqual(sum(c.args[0][-1] == '--rescan' for c in run.call_args_list), 1)
+
+    def test_nms_success_resets_outage_and_stops_intervention(self):
+        recovery = r.NetworkRecovery(lambda _: None, clock=lambda: 100)
+        recovery.started = 0; recovery.tried = {ROWS[0][1]: 80}; recovery.connected_attempt_at = 130
+        with patch.object(r, 'run', return_value=(1, '')), patch.object(r, 'visible', return_value=[]):
+            recovery.nms_ok()
+        self.assertIsNone(recovery.started)
+        self.assertEqual(recovery.tried, {})
+        self.assertEqual(recovery.connected_attempt_at, 0)
+
+    def test_helper_can_recover_ip_present_path_only_with_explicit_mode(self):
+        fields = {'connection.type':'802-11-wireless', 'connection.interface-name':'wlP1p1s0', '802-11-wireless.bssid':''}
+        for allowed in (False, True):
+            states = iter(['100', '30'])
+            def command(args, timeout=3):
+                if args[-1] == 'ping': return 0, 'PONG'
+                if 'GENERAL.STATE' in args: return 0, next(states)
+                if 'bssid' in args: return 0, 'OK'
+                return 0, ''
+            with patch.object(h.shutil, 'which', return_value='/usr/sbin/wpa_cli'), patch.object(h, 'field', side_effect=lambda u,k: fields[k]), patch.object(h, 'run', side_effect=command) as run, patch.object(h, 'ipv4_ready', return_value=True), patch.object(h, 'status', return_value={'wpa_state':'COMPLETED', 'bssid':ROWS[0][1], 'id':'0'}):
+                self.assertEqual(h.activate(UID, ROWS[0][1], allowed), 0 if allowed else 3)
+                self.assertEqual(any('up' in c.args[0] for c in run.call_args_list), allowed)
+
+    def test_scan_does_not_override_unavailable_or_activating_state(self):
+        for state in ('10', '20', '60', '110'):
+            with patch.object(h, 'run', return_value=(0, state)) as run:
+                self.assertEqual(h.rescan(), 3)
+                run.assert_called_once()
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,4 +1,4 @@
-"""Bounded, failure-triggered Wi-Fi recovery owned by scanner-agent only.
+"""Paced, failure-triggered Wi-Fi recovery owned by scanner-agent only.
 
 No background thread, motion commands, daemon restarts, or command replay.
 Recovery resets only after a successful NMS poll, not after nmcli succeeds.
@@ -42,7 +42,7 @@ def ipv4_ready():
         return None
     try:
         devices = json.loads(out)
-        if not isinstance(devices, list) or not devices:
+        if not isinstance(devices, list):
             return None
         for device in devices:
             for addr in device.get('addr_info', []):
@@ -100,6 +100,54 @@ class NetworkRecovery:
         self.tried = {}
         self.cached = []
         self.activating_since = None
+        self.context_at = 0
+        self.scan_at = 0
+        self.connected_attempt_at = 0
+        self.notes = {}
+
+    def note(self, reason):
+        now = self.clock()
+        if now >= self.notes.get(reason, -1):
+            self.log(f'NET_RECOVERY wait: {reason}')
+            self.notes[reason] = now + 30
+
+    def restore_context(self):
+        # No credentials read. An active profile is authoritative. Otherwise
+        # select only one unambiguous, autoconnect-enabled Wi-Fi profile.
+        now = self.clock()
+        if self.context or now < self.context_at:
+            return
+        self.context_at = now + 30
+        rc, active = run(['/usr/bin/nmcli', '-g', 'GENERAL.CON-UUID',
+                          'device', 'show', INTERFACE], 2)
+        active = active if not rc and re.fullmatch(UUID, active) else None
+        if active:
+            uuids = [active]
+        else:
+            rc, out = run(['/usr/bin/nmcli', '-g', 'UUID', 'connection', 'show'], 2)
+            uuids = [u for u in out.splitlines() if re.fullmatch(UUID, u)] if not rc else []
+        profiles = []
+        for uuid in uuids:
+            rc, out = run(['/usr/bin/nmcli', '-g',
+                'connection.type,connection.interface-name,connection.autoconnect,802-11-wireless.bssid,802-11-wireless.ssid',
+                'connection', 'show', 'uuid', uuid], 2)
+            values = out.splitlines()
+            if rc or len(values) != 5:
+                continue
+            kind, iface, automatic, pin, ssid = values
+            if (kind == '802-11-wireless' and iface in ('', '--', INTERFACE)
+                    and pin in ('', '--') and ssid and (active or automatic == 'yes')):
+                profiles.append((uuid, ssid))
+        if len(profiles) != 1:
+            self.note('profile unavailable, restricted, or ambiguous; no targeted activation')
+            return
+        uuid, ssid = profiles[0]
+        rows = visible()
+        current = next((r for r in rows if r[0] == '*' and r[4] == ssid), None)
+        # Without an active BSSID the saved profile still enforces authentication.
+        self.context = (uuid, current[3] if current else '', ssid)
+        self.cached = rows
+        self.log('NET_RECOVERY profile context restored without an NMS poll')
 
     def nms_ok(self):
         now = self.clock()
@@ -108,6 +156,8 @@ class NetworkRecovery:
             self.refresh_at = 0
         self.started = None
         self.tried.clear()
+        self.notes.clear()
+        self.connected_attempt_at = 0
         self.activating_since = None
         if now < self.refresh_at:
             return
@@ -126,9 +176,16 @@ class NetworkRecovery:
             self.started = now
             self.next_at = now + 5
             self.log(f'NET_RECOVERY outage detected: {reason}')
-        if now < self.next_at or os.path.exists(PAUSE):
+        if os.path.exists(PAUSE):
+            self.note('paused by marker')
+            return False
+        if now < self.next_at:
             return False
         state = wifi_state()
+        if state == 'unknown':
+            self.note('interface unavailable, intentionally unmanaged, or inspection failed')
+            return False
+        self.restore_context()
         if state in ('activating', 'no-ipv4'):
             if self.activating_since is None:
                 self.activating_since = now
@@ -136,9 +193,26 @@ class NetworkRecovery:
             if now - self.activating_since < 25:
                 return False
         else:
+            if state == 'connected' and self.activating_since is not None:
+                # An address just appeared: give the next NMS poll a chance.
+                self.connected_attempt_at = max(self.connected_attempt_at, now + 10)
             self.activating_since = None
-            if state != 'disconnected':
+            if state == 'connected':
+                # An address is not proof that the AP/backhaul reaches NMS.
+                # Limit disruption if NMS itself is down: at most one such
+                # attempt per 30 seconds, rotating candidates across failures.
+                if now - self.started < 30 or now < self.connected_attempt_at:
+                    self.note('IPv4 present; allowing 30s for NMS/path recovery')
+                    return False
+            elif state != 'disconnected':
+                self.note(f'unhandled state={state}')
                 return False
+        # Refresh a stale scan during an outage, never on the healthy path.
+        # The helper independently guards disabled/unmanaged interfaces.
+        if self.context and now >= self.scan_at:
+            self.scan_at = now + 60
+            rc, _ = run(['/usr/bin/sudo', '-n', '/usr/local/libexec/scanner-wifi-activate', '--rescan'], 6)
+            self.log(f'NET_RECOVERY scan request rc={rc}')
         target = None
         args = ACTIVATE
         if self.context:
@@ -148,7 +222,7 @@ class NetworkRecovery:
             rows.update({r[1].upper(): r for r in visible()})
             candidates = [(self.tried.get(mac.upper(), -1), -int(signal), mac.upper())
                           for _, mac, signal, sec, name in rows.values()
-                          if (sec, name) == (security, ssid)]
+                          if name == ssid and (not security or sec == security)]
             if candidates:
                 last, _, target = min(candidates)
                 if last >= 0 and now - last < 30:
@@ -158,13 +232,23 @@ class NetworkRecovery:
                         '/usr/local/libexec/scanner-wifi-activate', uuid, target]
         # Without a remembered profile, do not cancel an ongoing activation.
         current = wifi_state()
-        if os.path.exists(PAUSE) or current not in ('disconnected', 'activating', 'no-ipv4'):
+        if os.path.exists(PAUSE) or current not in ('disconnected', 'activating', 'no-ipv4', 'connected'):
             return False
+        if current == 'connected':
+            if state != 'connected':
+                return False  # native recovery just obtained an address
+            if not target:
+                self.note('NMS unreachable with IPv4 but no eligible target')
+                return False
+            args.append('nms-unreachable')
         if current in ('activating', 'no-ipv4') and (state not in ('activating', 'no-ipv4') or not target):
+            self.note('waiting for profile/candidate before cancelling activation')
             return False
         self.log(f'NET_RECOVERY state={current} request target={target or "automatic"}')
         rc, output = run(args, 90 if target else 14)
         end = self.clock()
+        if current == 'connected':
+            self.connected_attempt_at = end + 30
         if target:
             self.tried[target] = end
         self.activating_since = None
