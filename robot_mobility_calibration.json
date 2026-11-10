@@ -179,7 +179,7 @@
           "max_correction": 2.0
         },
         "model": "balanced_timed_v2",
-        "travel_heading_offset_deg": 0.0,
+        "travel_heading_offset_deg": -90.0,
         "turning": {
           "ccw_stop_margin_deg": 3.05,
           "cw_stop_margin_deg": 2.8,
