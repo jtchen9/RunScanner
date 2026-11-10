@@ -1,4 +1,4 @@
-"""Camera-only health command. Never writes mobility state or estimates location."""
+"""Robot health polling commands."""
 import json
 import subprocess
 import tempfile
@@ -60,3 +60,41 @@ def check_cameras(args):
         return finish()
     except Exception as exc:
         return unavailable(str(exc)[-300:])
+
+def check_static(args):
+    """Run the same unattended static preflight used by the lab operator."""
+    import math
+    import sys
+    result = {"schema": "static_health_v1", "request_id": args.get("request_id", "")}
+    def finish(ok, reason):
+        result.update(status="PASS" if ok else "FAIL", reason=reason)
+        return ("ok" if ok else "error"), json.dumps(result)
+
+    try:
+        expires = float(args.get("expires_ts", time.time()+150))
+        if not math.isfinite(expires) or expires <= time.time():
+            return finish(False, "request expired")
+        state = Path("/tmp/mobility_state.json")
+        if state.exists() and json.loads(state.read_text()).get("busy"):
+            return finish(False, "mobility busy")
+        from robot_mobility_location_capture import AV_SERVICE
+        service = subprocess.run(["/usr/bin/systemctl", "is-active", AV_SERVICE],
+                                 capture_output=True, text=True, timeout=5)
+        if service.stdout.strip() not in ("inactive", "failed"):
+            return finish(False, "AV active or ownership unknown")
+        script = Path(__file__).resolve().parent / "TestGyro" / "robot_mobility_preflight.py"
+        with tempfile.TemporaryDirectory(prefix="static_health_") as directory:
+            cp = subprocess.run([sys.executable, str(script), "--static-only",
+                                 "--output-dir", directory], stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True,
+                                timeout=max(0.01,min(150, expires-time.time())))
+            reports = list(Path(directory).glob("preflight_*.json"))
+            if len(reports) != 1:
+                return finish(False, "missing static report: " + (cp.stderr or cp.stdout)[-300:])
+            report = json.loads(reports[0].read_text(encoding="utf-8"))
+            result["checks"] = {c["name"]:c["status"] for c in report["checks"]}
+            ok = (cp.returncode == 0 and report.get("mode") == "static_only"
+                  and report.get("status") == "pass" and time.time() <= expires)
+            return finish(ok, "" if ok else str(report.get("failure") or "static check failed or expired"))
+    except Exception as exc:
+        return finish(False, str(exc)[-300:])

@@ -436,7 +436,7 @@ def main() -> int:
     parser.add_argument(
         "--static-only",
         action="store_true",
-        help="run calibration, HAT, gyro, and location checks without movement",
+        help="run calibration, HAT, gyro, and location checks without movement or operator input",
     )
     parser.add_argument(
         "--with-bump",
@@ -475,7 +475,7 @@ def main() -> int:
     print(f"Robot: {scanner}")
     print(f"Mode:  {report['mode']}")
     print("Calibration will not be changed.")
-    if not _yes_no("Start preflight?"):
+    if not args.static_only and not _yes_no("Start preflight?"):
         print("Cancelled.")
         return 0
 

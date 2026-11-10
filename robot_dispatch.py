@@ -52,6 +52,9 @@ def dispatch(
         return ("ok" if ok else "error"), detail
 
     if category == "health":
+        if action == "health.check.static":
+            from robot_health_check import check_static
+            return check_static(args)
         if action == "health.check.cameras":
             from robot_health_check import check_cameras
             return check_cameras(args)

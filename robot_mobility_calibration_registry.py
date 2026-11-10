@@ -55,6 +55,8 @@ class MobilityCalibrationSnapshot:
     bump_negative_y_right_speed: Optional[int] = None
     bump_negative_y_left_speed: Optional[int] = None
 
+    travel_heading_offset_deg: float = 0.0  # wheel travel bearing minus camera heading
+
     @property
     def uses_balanced_timed_v2(self) -> bool:
         return self.drivetrain_model == DRIVETRAIN_MODEL_BALANCED_TIMED_V2
@@ -467,6 +469,11 @@ def load_mobility_calibration(
             forward_kick_left_speed=forward_kick_left_speed,
             turn_ccw_stop_margin_deg=turn_ccw_stop_margin_deg,
             turn_cw_stop_margin_deg=turn_cw_stop_margin_deg,
+            travel_heading_offset_deg=(
+                _finite_number(drivetrain.get("travel_heading_offset_deg", 0.0),
+                               "drivetrain.travel_heading_offset_deg")
+                if drivetrain is not None else 0.0
+            ),
             drivetrain_model=drivetrain_model,
             forward_right_speed=forward_right_speed,
             forward_left_speed=forward_left_speed,

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import json
+import math
+import re
 import subprocess
 import threading
 import time
@@ -235,8 +237,10 @@ def _run_move_direction(
     return move_backward(distance_m, move_profile=move_profile)
 
 
-def _finalize_with_location() -> Tuple[bool, str]:
+def _finalize_with_location(movement=None) -> Tuple[bool, str]:
     ok_loc, loc_data = _run_location_capture()
+    if movement is not None and isinstance(loc_data, dict):
+        loc_data["movement_evidence"] = movement
     if not ok_loc:
         _finish_state(
             exec_status="error",
@@ -286,7 +290,7 @@ def _execute_turn_only(
             )
             return False, turn_detail
 
-        ok_final, final_detail = _finalize_with_location()
+        ok_final, final_detail = _finalize_with_location({"pre_deg": angle_deg, "pre_kind": _turn_kind(turn_detail)})
         if not ok_final:
             return False, final_detail
 
@@ -300,6 +304,15 @@ def _execute_turn_only(
             location_result=None,
         )
         return False, f"UNEXPECTED_EXCEPTION {e}"
+
+
+def _turn_kind(detail):
+    if detail.startswith(("turn_noop", "turn_skipped")):
+        return "none"
+    for kind in ("direct", "composite"):
+        if detail.startswith("signed_turn_attempt1_done plan_kind=" + kind + " "):
+            return kind
+    return "other"  # including residual retries
 
 
 def _execute_turn_move_turn(
@@ -369,7 +382,13 @@ def _execute_turn_move_turn(
             return False, f"post_turn_failed: {post_detail}"
 
         # 4) one location capture at the very end
-        ok_final, final_detail = _finalize_with_location()
+        yaw_match = re.search(r"\bmax_abs_yaw_deg=([-+0-9.]+)", move_detail)
+        ok_final, final_detail = _finalize_with_location({
+            "max_move_yaw_deg": float(yaw_match.group(1)) if yaw_match else None,
+            "pre_deg": pre_angle, "pre_kind": _turn_kind(pre_detail),
+            "post_deg": post_angle, "post_kind": _turn_kind(post_detail),
+            "distance_m": distance_m, "skipped": move_detail.startswith("move_skipped"),
+        })
         if not ok_final:
             return False, final_detail
 
@@ -421,16 +440,19 @@ def exec_mobility_turn_move_turn_forward(args: Dict[str, Any]) -> Tuple[bool, st
     if not ok_profile:
         return _fail_immediate("BAD_COMMAND_ARGS", detail_profile)
 
-    if move_profile != "default":
-        direction = (
-            "positive_y"
-            if move_profile == "bump_crossing_up"
-            else "negative_y"
-        )
-        try:
-            distance_m = load_mobility_calibration().bump_crossing_distance(direction)
-        except MobilityCalibrationError as exc:
-            return _fail_immediate("BUMP_CALIBRATION_FAIL", str(exc))
+    try:
+        profile = load_mobility_calibration()
+    except MobilityCalibrationError as exc:
+        return _fail_immediate("MOBILITY_CALIBRATION_FAIL", str(exc))
+    # The issued distance remains the physical target, including at the bump.
+    # Offset is applied locally only to an actual forward translation.
+    if not all(math.isfinite(v) for v in (pre_angle, post_angle, distance_m)) or max(abs(pre_angle), abs(post_angle)) > 360:
+        return _fail_immediate("BAD_COMMAND_ARGS", "invalid forward motion geometry")
+    if profile.uses_balanced_timed_v2 and distance_m >= profile.minimum_move_distance_m:
+        offset = profile.travel_heading_offset_deg
+        if offset:
+            pre_angle = (pre_angle - offset + 180) % 360 - 180
+            post_angle = (post_angle + offset + 180) % 360 - 180
 
     pre_angle = _zero_small_angle(pre_angle)
     post_angle = _zero_small_angle(post_angle)

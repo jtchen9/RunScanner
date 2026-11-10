@@ -610,7 +610,9 @@ def _write_results(scanner: str, results: Dict[str, object]) -> None:
     entry["gz_bias"] = results["gyro"]["gz_bias"]
     entry["calibrated_at_utc"] = _utc_now()
     entry["source"] = str(RESULT_PATH)
+    offset = (entry.get("drivetrain") or {}).get("travel_heading_offset_deg", 0.0)
     entry["drivetrain"] = {
+        "travel_heading_offset_deg": offset,
         "model": DRIVETRAIN_MODEL_BALANCED_TIMED_V2,
         "forward": {
             "right_speed": results["forward_balance"]["right_speed"],
