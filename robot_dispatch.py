@@ -40,6 +40,30 @@ def dispatch(
     action = (cmd_fields.get("action") or "").strip()
     args = parse_args_json(cmd_fields.get("args_json") or "")
 
+    if category == "system":
+        if action != "system.shutdown":
+            return "error", f"unknown system action: {action}"
+        import json
+        import subprocess
+        raw = cmd_fields.get("args_json")
+        if raw not in (None, ""):
+            try:
+                supplied = json.loads(raw) if isinstance(raw, str) else raw
+            except ValueError:
+                return "error", "system.shutdown requires empty args"
+            if supplied != {}:
+                return "error", "system.shutdown requires empty args"
+        try:
+            result = subprocess.run(
+                ["/usr/bin/sudo", "-n", "/usr/sbin/shutdown", "-P", "+1"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return "error", f"shutdown scheduling failed: {exc}"
+        if result.returncode:
+            return "error", result.stderr.strip() or "shutdown scheduling failed"
+        return "ok", "poweroff scheduled in one minute"
+
     if category and category not in ("scan", "av", "voice", "mobility", "health", "traffic"):
         return "error", f"unsupported category={category}"
 
