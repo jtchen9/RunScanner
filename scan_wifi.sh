@@ -37,15 +37,47 @@ MODE="${1:-once}"
 PARSER="/opt/_RunScanner/parse_iw.py"
 IW_BIN="$(command -v iw)"
 
-scan_once() {
-  : > "$OUT_CSV"
-  : > "$OUT_JSON"
-  # run iw (stderr -> debug file), pipe stdout to parser
-  if ! "$IW_BIN" dev "$IFACE" scan 2>/tmp/iw_err.txt | /usr/bin/python3 "$PARSER" "$OUT_CSV" "$OUT_JSON"; then
-    echo "Parser failed; see /tmp/iw_err.txt"
-    return 1
+# Bound the entire pipeline, including a parser blocked waiting for EOF.
+SCAN_TIMEOUT_SEC="${SCAN_TIMEOUT_SEC:-30}"
+if ! [[ "$SCAN_TIMEOUT_SEC" =~ ^[1-9][0-9]*$ ]]; then
+  echo "SCAN_TIMEOUT_SEC must be a positive integer" >&2
+  exit 2
+fi
+TIMEOUT_BIN="$(command -v timeout)" || { echo "GNU timeout is required" >&2; exit 1; }
+
+scan_once() (
+  local work rc
+  # Keep the original not-ready signal for the uploader. Never expose a
+  # partially written JSON or let an older report masquerade as this scan.
+  : > "$OUT_JSON" || return 1
+  : > "$OUT_CSV" || return 1
+  work="$(mktemp -d /tmp/scanner-poller.XXXXXXXX)" || return 1
+  trap 'rm -rf -- "$work"' EXIT
+
+  # timeout controls the worker process group. Keep the worker shell around
+  # through TERM if a pipeline member needs the subsequent KILL.
+  if "$TIMEOUT_BIN" --kill-after=3s "${SCAN_TIMEOUT_SEC}s" \
+      /bin/bash -o pipefail -c '
+        trap ":" TERM
+        "$1" dev "$2" scan 2>/tmp/iw_err.txt | /usr/bin/python3 "$3" "$4" "$5"
+      ' scan-worker "$IW_BIN" "$IFACE" "$PARSER" "$work/scan.csv" "$work/scan.json" 9>&-; then
+    if [[ ! -s "$work/scan.json" || ! -f "$work/scan.csv" ]]; then
+      echo "SCAN_INCOMPLETE iface=$IFACE: parser did not produce scan outputs" >&2
+      return 1
+    fi
+    # Same filesystem: publish ready JSON last, in one rename.
+    mv -f -- "$work/scan.csv" "$OUT_CSV" || return 1
+    mv -f -- "$work/scan.json" "$OUT_JSON" || return 1
+  else
+    rc=$?
+    case "$rc" in
+      124) echo "SCAN_TIMEOUT iface=$IFACE limit=${SCAN_TIMEOUT_SEC}s; result discarded" >&2 ;;
+      137) echo "SCAN_KILLED iface=$IFACE rc=137 (forced kill); result discarded" >&2 ;;
+      *)   echo "SCAN_FAILED iface=$IFACE rc=$rc; see /tmp/iw_err.txt" >&2 ;;
+    esac
+    return "$rc"
   fi
-}
+)
 
 if [[ "$MODE" == "loop" ]]; then
   while true; do
