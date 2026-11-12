@@ -51,7 +51,11 @@ def dispatch(
                 supplied = json.loads(raw) if isinstance(raw, str) else raw
             except ValueError:
                 return "error", "system.shutdown requires empty args"
-            if supplied != {}:
+            # Scripted commands include NMS bookkeeping alongside action arguments.
+            # Only an empty object or the metadata envelope alone is valid here.
+            if not isinstance(supplied, dict) or supplied.keys() - {"_experiment"}:
+                return "error", "system.shutdown requires empty args"
+            if "_experiment" in supplied and not isinstance(supplied["_experiment"], dict):
                 return "error", "system.shutdown requires empty args"
         try:
             result = subprocess.run(
