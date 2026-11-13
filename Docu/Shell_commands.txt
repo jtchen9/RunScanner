@@ -17,7 +17,7 @@ cat /etc/config/dhcp
 Upgrade an AP:
 
 At PC side:
-scp -O ./prplos-ipq95xx-generic-wnc_lrg1-squashfs-sysupgrade.bin 192.168.11.1:/tmp/
+scp -O ./prplos-ipq95xx-generic-wnc_lrg1-squashfs-sysupgrade.bin root@192.168.11.1:/tmp/
 
 ssh root@ 192.168.11.1
 cd /tmp
