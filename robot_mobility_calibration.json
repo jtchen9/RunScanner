@@ -35,20 +35,20 @@
             "distance_m": 2.0,
             "left_speed": 40,
             "right_speed": 40,
-            "seconds_per_meter": 5.797101449275363
+            "seconds_per_meter": 6.088947954866271
           },
           "positive_y": {
             "distance_m": 2.0,
             "left_speed": 40,
             "right_speed": 40,
-            "seconds_per_meter": 5.853658536585367
+            "seconds_per_meter": 6.148352325157649
           }
         },
         "forward": {
           "left_speed": 29,
           "minimum_distance_m": 0.1,
           "right_speed": 30,
-          "seconds_per_meter": 8.450704225352114
+          "seconds_per_meter": 8.876142441248719
         },
         "heading_hold": {
           "deadband_deg": 2.0,
@@ -158,20 +158,20 @@
             "distance_m": 2.0,
             "left_speed": 40,
             "right_speed": 40,
-            "seconds_per_meter": 6.6161843199525725
+            "seconds_per_meter": 6.173515557953321
           },
           "positive_y": {
             "distance_m": 2.0,
             "left_speed": 40,
             "right_speed": 40,
-            "seconds_per_meter": 6.648458389806001
+            "seconds_per_meter": 6.203630267992119
           }
         },
         "forward": {
           "left_speed": 31,
           "minimum_distance_m": 0.1,
           "right_speed": 30,
-          "seconds_per_meter": 9.689104051494525
+          "seconds_per_meter": 9.040835580130691
         },
         "heading_hold": {
           "deadband_deg": 2.0,
@@ -292,7 +292,7 @@
           "max_correction": 2.0
         },
         "model": "balanced_timed_v2",
-        "travel_heading_offset_deg": 0.0,
+        "travel_heading_offset_deg": -1.925332844681833,
         "turning": {
           "ccw_stop_margin_deg": 1.5,
           "cw_stop_margin_deg": 2.2,
@@ -401,20 +401,20 @@
             "distance_m": 2.0,
             "left_speed": 40,
             "right_speed": 40,
-            "seconds_per_meter": 6.284000512709291
+            "seconds_per_meter": 5.887760323098937
           },
           "positive_y": {
             "distance_m": 2.0,
             "left_speed": 40,
             "right_speed": 40,
-            "seconds_per_meter": 6.38067744367405
+            "seconds_per_meter": 5.978341251146613
           }
         },
         "forward": {
           "left_speed": 33,
           "minimum_distance_m": 0.1,
           "right_speed": 30,
-          "seconds_per_meter": 8.50272506731052
+          "seconds_per_meter": 7.966582305058697
         },
         "heading_hold": {
           "deadband_deg": 2.0,
