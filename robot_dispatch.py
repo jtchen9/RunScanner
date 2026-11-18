@@ -38,7 +38,6 @@ def dispatch(
     """
     category = (cmd_fields.get("category") or "").strip()
     action = (cmd_fields.get("action") or "").strip()
-    args = parse_args_json(cmd_fields.get("args_json") or "")
 
     if category == "system":
         if action != "system.shutdown":
@@ -46,27 +45,36 @@ def dispatch(
         import json
         import subprocess
         raw = cmd_fields.get("args_json")
+        supplied = {}
         if raw not in (None, ""):
             try:
                 supplied = json.loads(raw) if isinstance(raw, str) else raw
-            except ValueError:
-                return "error", "system.shutdown requires empty args"
-            # Scripted commands include NMS bookkeeping alongside action arguments.
-            # Only an empty object or the metadata envelope alone is valid here.
-            if not isinstance(supplied, dict) or supplied.keys() - {"_experiment"}:
-                return "error", "system.shutdown requires empty args"
-            if "_experiment" in supplied and not isinstance(supplied["_experiment"], dict):
-                return "error", "system.shutdown requires empty args"
+            except (TypeError, ValueError):
+                return "error", "system.shutdown requires a JSON object"
+        # _experiment is NMS bookkeeping, not a public command argument.
+        if not isinstance(supplied, dict) or supplied.keys() - {"time_to_wait", "_experiment"}:
+            return "error", "system.shutdown accepts only optional time_to_wait"
+        if "_experiment" in supplied and not isinstance(supplied["_experiment"], dict):
+            return "error", "system.shutdown _experiment metadata must be an object"
+        time_to_wait = supplied.get("time_to_wait", 300)
+        if type(time_to_wait) is not int or time_to_wait <= 0:
+            return "error", "system.shutdown time_to_wait must be a positive integer in seconds"
         try:
+            # systemd owns the countdown. Wait only for scheduling to finish,
+            # never for poweroff; scanner-agent must keep polling afterwards.
+            # --when supports seconds (systemd >= 254), unlike shutdown +m.
             result = subprocess.run(
-                ["/usr/bin/sudo", "-n", "/usr/sbin/shutdown", "-P", "+1"],
+                ["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "poweroff",
+                 f"--when=+{time_to_wait}s"],
                 capture_output=True, text=True, timeout=10,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             return "error", f"shutdown scheduling failed: {exc}"
         if result.returncode:
             return "error", result.stderr.strip() or "shutdown scheduling failed"
-        return "ok", "poweroff scheduled in one minute"
+        return "ok", f"poweroff scheduled in {time_to_wait} seconds"
+
+    args = parse_args_json(cmd_fields.get("args_json") or "")
 
     if category and category not in ("scan", "av", "voice", "mobility", "health", "traffic"):
         return "error", f"unsupported category={category}"
