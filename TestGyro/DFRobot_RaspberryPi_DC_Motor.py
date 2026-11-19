@@ -228,7 +228,12 @@ class DFRobot_DC_Motor_IIC(DFRobot_DC_Motor):
       @oaram addr     Board controler address
     '''
     self._bus = smbus.SMBus(bus_id)
-    DFRobot_DC_Motor.__init__(self, addr)
+    try:
+      DFRobot_DC_Motor.__init__(self, addr)
+    except BaseException:
+      self._bus.close()
+      self._bus = None
+      raise
 
   def _write_bytes(self, reg, buf):
     self.last_operate_status = self.STA_ERR_DEVICE_NOT_DETECTED

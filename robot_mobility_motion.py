@@ -7,6 +7,7 @@ from typing import Deque, NamedTuple, Optional, Tuple
 
 from TestGyro.DFRobot_RaspberryPi_DC_Motor import DFRobot_DC_Motor_IIC
 from icm20948 import ICM20948
+from smbus2 import SMBus as GyroSMBus
 from robot_mobility_vl53l1x import check_blocked
 from robot_mobility_calibration_registry import (
     MobilityCalibrationSnapshot,
@@ -134,22 +135,56 @@ class MotorStopFailure(RuntimeError):
     """Raised when no stop command can be delivered to the motor HAT."""
 
 
+def _close_bus(owner):
+    """Release an owned bus; cleanup errors must not hide a stop failure."""
+    if owner is None:
+        return
+    bus = getattr(owner, "_bus", None)
+    if bus is not None:
+        try:
+            bus.close()
+            owner._bus = None
+        except Exception as exc:
+            print(f"I2C_CLOSE_FAILED: {exc}", file=sys.stderr, flush=True)
+
+
+def _stop_and_close(m, imu=None):
+    try:
+        _safe_stop(m)
+    finally:
+        _close_bus(imu)
+        _close_bus(m)
+
+
 def _motor_begin() -> Tuple[bool, object, str]:
     if _MOTOR_STOP_FAILURE_LATCHED:
         return False, None, "motor_start_blocked_after_critical_stop_failure"
+    m = None
     try:
         m = DFRobot_DC_Motor_IIC(BUS, ADDR)
         st = m.begin()
         return True, m, f"begin status={st}"
-    except Exception as e:
+    except BaseException as e:
+        _close_bus(m)
+        if not isinstance(e, Exception):
+            raise
         return False, None, f"motor_begin_exception: {e}"
 
 
 def _imu_begin() -> Tuple[bool, object, str]:
+    bus = None
     try:
-        imu = ICM20948()
+        bus = GyroSMBus(BUS)
+        imu = ICM20948(i2c_bus=bus)
         return True, imu, "imu ok"
-    except Exception as e:
+    except BaseException as e:
+        if bus is not None:
+            try:
+                bus.close()
+            except Exception as close_error:
+                print(f"I2C_CLOSE_FAILED: {close_error}", file=sys.stderr, flush=True)
+        if not isinstance(e, Exception):
+            raise
         import traceback
         print("IMU initialization failed:", file=sys.stderr, flush=True)
         traceback.print_exc()
@@ -185,30 +220,33 @@ def _safe_stop(m) -> Tuple[bool, str]:
 
     recovered_motor = None
     try:
-        recovered_motor = DFRobot_DC_Motor_IIC(BUS, ADDR)
-        status = recovered_motor.begin()
-        errors.append(f"reinitialize_status={status}")
-    except Exception as exc:
-        errors.append(f"reinitialize={type(exc).__name__}:{exc}")
-
-    if recovered_motor is not None:
-        for attempt in range(1, MOTOR_STOP_REINIT_RETRY_COUNT + 1):
-            try:
-                recovered_motor.motor_stop(recovered_motor.ALL)
-                print(
-                    "WARNING_MOTOR_STOP_RECOVERED "
-                    f"path=reinitialized_connection attempt={attempt}",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                return True, f"motor_stop_ok_after_reinitialize attempt={attempt}"
-            except Exception as exc:
-                errors.append(
-                    f"reinitialized_attempt_{attempt}="
-                    f"{type(exc).__name__}:{exc}"
-                )
-                if attempt < MOTOR_STOP_REINIT_RETRY_COUNT:
-                    time.sleep(MOTOR_STOP_RETRY_DELAY_SEC)
+        try:
+            recovered_motor = DFRobot_DC_Motor_IIC(BUS, ADDR)
+            status = recovered_motor.begin()
+            errors.append(f"reinitialize_status={status}")
+        except Exception as exc:
+            errors.append(f"reinitialize={type(exc).__name__}:{exc}")
+    
+        if recovered_motor is not None:
+            for attempt in range(1, MOTOR_STOP_REINIT_RETRY_COUNT + 1):
+                try:
+                    recovered_motor.motor_stop(recovered_motor.ALL)
+                    print(
+                        "WARNING_MOTOR_STOP_RECOVERED "
+                        f"path=reinitialized_connection attempt={attempt}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    return True, f"motor_stop_ok_after_reinitialize attempt={attempt}"
+                except Exception as exc:
+                    errors.append(
+                        f"reinitialized_attempt_{attempt}="
+                        f"{type(exc).__name__}:{exc}"
+                    )
+                    if attempt < MOTOR_STOP_REINIT_RETRY_COUNT:
+                        time.sleep(MOTOR_STOP_RETRY_DELAY_SEC)
+    finally:
+        _close_bus(recovered_motor)
 
     _MOTOR_STOP_FAILURE_LATCHED = True
     detail = "; ".join(errors)
@@ -289,7 +327,7 @@ def _run_forward_startup_trial(
     except Exception as exc:
         return False, f"MOVE_STARTUP_CALIBRATION_FAIL {exc}"
     finally:
-        _safe_stop(m)
+        _stop_and_close(m)
 
 
 def _run_move(
@@ -336,41 +374,42 @@ def _run_move(
     if not ok:
         return False, detail
 
-    if calibration.uses_balanced_timed_v2:
-        right_cruise_speed, left_cruise_speed = calibration.move_speeds(profile)
-        motor_distance_m = (
-            distance_m
-            if motor_distance_override is None
-            else max(0.0, float(motor_distance_override))
-        )
-        cruise_time = motor_distance_m * calibration.move_seconds_per_meter(profile)
-        kick_time_sec = 0.0
-        heading_hold_kp = float(calibration.heading_hold_kp or 0.0)
-        heading_hold_deadband_deg = float(
-            calibration.heading_hold_deadband_deg or 0.0
-        )
-        heading_hold_max_correction = float(
-            calibration.heading_hold_max_correction or 0.0
-        )
-    else:
-        cruise_speed = _move_cruise_speed_for_profile(profile)
-        right_cruise_speed = cruise_speed
-        left_cruise_speed = cruise_speed
-        motor_distance_m = (
-            calibration.motor_distance(distance_m)
-            if motor_distance_override is None
-            else max(0.0, float(motor_distance_override))
-        )
-        cruise_time = motor_distance_m * MOVE_SEC_PER_METER
-        kick_time_sec = MOVE_KICK_TIME_SEC
-        heading_hold_kp = HEADING_HOLD_KP
-        heading_hold_deadband_deg = HEADING_HOLD_DEADBAND_DEG
-        heading_hold_max_correction = HEADING_HOLD_MAX_CORRECTION
-
-    yaw_deg = 0.0
-    max_abs_yaw_deg = 0.0
-
+    imu = None
     try:
+        if calibration.uses_balanced_timed_v2:
+            right_cruise_speed, left_cruise_speed = calibration.move_speeds(profile)
+            motor_distance_m = (
+                distance_m
+                if motor_distance_override is None
+                else max(0.0, float(motor_distance_override))
+            )
+            cruise_time = motor_distance_m * calibration.move_seconds_per_meter(profile)
+            kick_time_sec = 0.0
+            heading_hold_kp = float(calibration.heading_hold_kp or 0.0)
+            heading_hold_deadband_deg = float(
+                calibration.heading_hold_deadband_deg or 0.0
+            )
+            heading_hold_max_correction = float(
+                calibration.heading_hold_max_correction or 0.0
+            )
+        else:
+            cruise_speed = _move_cruise_speed_for_profile(profile)
+            right_cruise_speed = cruise_speed
+            left_cruise_speed = cruise_speed
+            motor_distance_m = (
+                calibration.motor_distance(distance_m)
+                if motor_distance_override is None
+                else max(0.0, float(motor_distance_override))
+            )
+            cruise_time = motor_distance_m * MOVE_SEC_PER_METER
+            kick_time_sec = MOVE_KICK_TIME_SEC
+            heading_hold_kp = HEADING_HOLD_KP
+            heading_hold_deadband_deg = HEADING_HOLD_DEADBAND_DEG
+            heading_hold_max_correction = HEADING_HOLD_MAX_CORRECTION
+    
+        yaw_deg = 0.0
+        max_abs_yaw_deg = 0.0
+    
         _safe_stop(m)
         _sleep_checked(0.2)
 
@@ -496,7 +535,7 @@ def _run_move(
     finally:
         # Calibration is interactive, so Ctrl+C or another Python-level exit
         # must not leave forward or backward motor drive active.
-        _safe_stop(m)
+        _stop_and_close(m, imu)
     
 
 def _run_turn_measured(
@@ -523,15 +562,17 @@ def _run_turn_measured(
     if not ok_m:
         return _TurnExecution(False, detail_m, 0.0)
 
-    ok_i, imu, detail_i = _imu_begin()
-    if not ok_i:
-        _safe_stop(m)
-        return _TurnExecution(False, detail_i, 0.0)
-
-    target_yaw = -abs(angle_deg) if left else abs(angle_deg)
+    imu = None
     yaw_deg = 0.0
-
     try:
+        ok_i, imu, detail_i = _imu_begin()
+        if not ok_i:
+            _safe_stop(m)
+            return _TurnExecution(False, detail_i, 0.0)
+    
+        target_yaw = -abs(angle_deg) if left else abs(angle_deg)
+        yaw_deg = 0.0
+    
         _safe_stop(m)
         _sleep_checked(0.2)
 
@@ -711,7 +752,7 @@ def _run_turn_measured(
     finally:
         # Every exit path—including timeout, sensor exception, or normal
         # completion—must remove motor drive before returning to the agent.
-        _safe_stop(m)
+        _stop_and_close(m, imu)
 
 
 def _run_turn(
