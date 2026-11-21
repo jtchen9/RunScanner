@@ -56,7 +56,7 @@ def dispatch(
             return "error", "system.shutdown accepts only optional time_to_wait"
         if "_experiment" in supplied and not isinstance(supplied["_experiment"], dict):
             return "error", "system.shutdown _experiment metadata must be an object"
-        time_to_wait = supplied.get("time_to_wait", 300)
+        time_to_wait = supplied.get("time_to_wait", 60)
         if type(time_to_wait) is not int or time_to_wait <= 0:
             return "error", "system.shutdown time_to_wait must be a positive integer in seconds"
         try:
