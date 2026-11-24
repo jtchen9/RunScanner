@@ -93,8 +93,4 @@ ssh locked:
 ssh-keygen -R 192.168.11.1  
 
 ==========================
-set Wi-Fi private so that devices will report to the NMS
 
-Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
-
-==========================
