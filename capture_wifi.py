@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preserve legacy scan outputs and collect raw AX210 monitor captures.
+"""v1.1: Preserve legacy scan outputs and collect raw AX210 monitor captures.
 
 No third-party Python dependencies. Settings are in __main__ below.
 No packet-field assumptions or transmit-power estimates are made here.
@@ -93,7 +93,7 @@ def discover_plan(scan, phy, explicit):
     Wide settings are receiver probes, not claims about an AP's actual width.
     Kernel/regulatory checks decide whether a particular setting is permitted.
     """
-    allowed = {int(m[0]) for m in re.findall(r'\* (\d+) MHz \[\d+\]([^\n]*)', phy)
+    allowed = {int(m[0]) for m in re.findall(r'^\s*\*\s+(\d+)(?:\.0+)?\s+MHz\s+\[\d+\]([^\n]*)', phy, re.M)
                if 'disabled' not in m[1]}
     if explicit:
         plan = [dict(primary_mhz=int(x[0]), width_mhz=int(x[1]), center_mhz=int(x[2]))
@@ -102,7 +102,7 @@ def discover_plan(scan, phy, explicit):
             if p['width_mhz'] not in (20, 40, 80, 160):
                 raise ValueError('Channel plan widths must be 20, 40, 80, or 160 MHz')
         return plan, 'explicit'
-    found = {int(f) for f in re.findall(r'^\s*freq:\s*(\d+)', scan, re.M)}
+    found = {int(f) for f in re.findall(r'^\s*freq:\s*(\d+)(?:\.0+)?\s*$', scan, re.M)}
     freqs = sorted(found & allowed)
     source = 'fresh_scan'
     if not freqs:
@@ -138,6 +138,11 @@ def discover_plan(scan, phy, explicit):
                 if f in subs and all(x in allowed for x in subs):
                     plan.append(dict(primary_mhz=f, width_mhz=width, center_mhz=c))
     return plan, source
+
+
+def parse_tuning(text):
+    match = re.search(r'channel\s+\d+\s+\((\d+)(?:\.0+)?\s+MHz\),\s*width:\s+(\d+)\s+MHz', text)
+    return (int(match[1]), int(match[2])) if match else None
 
 
 def pcap_info(path):
@@ -250,6 +255,8 @@ class Collector:
         return {'ok': True}
 
     def monitor(self, report):
+        if not report['plan']:
+            raise RuntimeError('No capture channels parsed; inspect phy_before.txt and iw_scan.txt. Capture was not started.')
         iface = self.iface
         info = self.checked(['iw', 'dev', iface, 'info'])
         if not re.search(r'^\s*type managed\s*$', info, re.M):
@@ -294,6 +301,7 @@ class Collector:
                     break
                 report['attempted_profiles'] += 1
                 f, width, center = (setting[k] for k in ('primary_mhz', 'width_mhz', 'center_mhz'))
+                print(f"Profile {i + 1}/{len(report['plan'])}: primary={f} MHz width={width} MHz center={center} MHz", flush=True)
                 args = ['iw', 'dev', iface, 'set', 'freq', str(f)]
                 args += ['HT20'] if width == 20 else [str(width), str(center)]
                 r = self.command(args)
@@ -303,8 +311,8 @@ class Collector:
                     self.save(report)
                     continue
                 item['interface_before'] = self.command(['iw', 'dev', iface, 'info'])['stdout']
-                actual = re.search(r'channel\s+\d+\s+\((\d+) MHz\), width:\s+(\d+) MHz', item['interface_before'])
-                item['tuning_verified'] = bool(actual and (int(actual[1]), int(actual[2])) == (f, width))
+                actual = parse_tuning(item['interface_before'])
+                item['tuning_verified'] = actual == (f, width)
                 if actual and not item['tuning_verified']:
                     item['error'] = 'Observed tuning differs from requested profile; capture skipped'
                     self.save(report)
@@ -361,7 +369,7 @@ class Collector:
             raise RuntimeError('Insufficient free disk space; existing captures were retained')
         self.session = Path(tempfile.mkdtemp(prefix=dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ_'), dir=root))
         self.events = self.session / 'commands.jsonl'
-        report = {'version': 1, 'start_utc': utc(), 'hostname': socket.gethostname(),
+        report = {'version': '1.1', 'start_utc': utc(), 'hostname': socket.gethostname(),
                   'iface': self.iface, 'phy': self.phy, 'captures': [], 'attempted_profiles': 0,
                   'status': 'running', 'capture_requested': capture,
                   'settings': {k: str(v) if isinstance(v, Path) else v for k, v in self.cfg.items()}}
@@ -375,6 +383,7 @@ class Collector:
                 scan if report['legacy_scan'].get('stage') != 'iw_scan' else '', phy, self.cfg['plan'])
             self.save(report)
             if capture:
+                print(f"Capture plan: {len(report['plan'])} receive profiles; monitor budget {self.cfg['monitor_seconds']} seconds", flush=True)
                 self.monitor(report)
             report['status'] = 'completed'
         except BaseException as exc:
@@ -392,7 +401,7 @@ class Collector:
             # Include a capture interrupted before its per-profile record was completed.
             report['pcap_files'] = [pcap_info(p) for p in sorted(self.session.glob('*.pcap*'))]
             report['saved_packets'] = sum(f['packets'] for f in report['pcap_files'])
-            report['sweep_complete'] = report['unvisited_profiles'] == 0
+            report['sweep_complete'] = bool(report.get('plan')) and report['unvisited_profiles'] == 0
             if report['status'] == 'completed':
                 if not report.get('legacy_scan', {}).get('ok'):
                     report['status'] = 'scan_failed'
