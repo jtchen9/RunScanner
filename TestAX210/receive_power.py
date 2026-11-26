@@ -77,7 +77,7 @@ if __name__ == '__main__':
         'iface': '',
         'root': Path(__file__).resolve().parent / 'results',
         # Match the SENDER's iw dev output. This is the lab's known 6 GHz profile.
-        'profile': {'primary_mhz': 5180, 'width_mhz': 80, 'center_mhz': 5210},
+        'profile': {'primary_mhz': 6115, 'width_mhz': 160, 'center_mhz': 6185},
         'monitor_seconds': 180,
         'session_mb': 256,
         'min_free_mb': 1024,
