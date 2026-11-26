@@ -135,7 +135,7 @@ if __name__ == '__main__':
         'iface': '',  # Auto-select the sole managed Intel interface, excluding wlan0.
         'root': Path(__file__).resolve().parent / 'results',
         'target_ipv4': '',  # Empty: use this Wi-Fi interface's IPv4 gateway.
-        'mode': 'limit',  # Repeat later with 'fixed'; rejection is recorded, never silently substituted.
+        'mode': 'fixed',  # Repeat later with 'limit'/'fixed'; rejection is recorded, never silently substituted.
         'powers_dbm': [5, 10, 15, 20, 15, 10, 5],
         'settle_seconds': 2,
         'hold_seconds': 10,
