@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""v1.1: Preserve legacy scan outputs and collect raw AX210 monitor captures.
+"""v1.2: Isolated RX-only monitor capture with Radiotap header checks.
 
 No third-party Python dependencies. Settings are in __main__ below.
 No packet-field assumptions or transmit-power estimates are made here.
@@ -87,14 +87,18 @@ def choose_iface(explicit):
     return names[0]
 
 
+def enabled_frequencies(phy):
+    return {int(m[0]) for m in re.findall(r'^\s*\*\s+(\d+)(?:\.0+)?\s+MHz\s+\[\d+\]([^\n]*)', phy, re.M)
+            if 'disabled' not in m[1]}
+
+
 def discover_plan(scan, phy, explicit):
     """Primary 20 MHz pass first, then 40/80/160 MHz candidate receive settings.
 
     Wide settings are receiver probes, not claims about an AP's actual width.
     Kernel/regulatory checks decide whether a particular setting is permitted.
     """
-    allowed = {int(m[0]) for m in re.findall(r'^\s*\*\s+(\d+)(?:\.0+)?\s+MHz\s+\[\d+\]([^\n]*)', phy, re.M)
-               if 'disabled' not in m[1]}
+    allowed = enabled_frequencies(phy)
     if explicit:
         plan = [dict(primary_mhz=int(x[0]), width_mhz=int(x[1]), center_mhz=int(x[2]))
                 for x in explicit]
@@ -145,10 +149,43 @@ def parse_tuning(text):
     return (int(match[1]), int(match[2])) if match else None
 
 
+def radiotap_header_ok(packet):
+    """Structural header check only; individual PHY fields still need decoding."""
+    if len(packet) < 8 or packet[0] != 0 or packet[1] != 0:
+        return False
+    length = int.from_bytes(packet[2:4], 'little')
+    if not 8 <= length <= len(packet):
+        return False
+    offset = 4
+    while offset + 4 <= length:
+        word = int.from_bytes(packet[offset:offset + 4], 'little')
+        offset += 4
+        if not word & (1 << 31):
+            return True
+    return False
+
+
+def probe_plan(phy):
+    """Lab channels already seen in Echo's scans. Never force disabled channels."""
+    candidates = [(2412, 20, 2412), (5180, 20, 5180), (6115, 20, 6115),
+                  (5180, 80, 5210), (6115, 160, 6185)]
+    enabled = enabled_frequencies(phy)
+    accepted, skipped = [], []
+    for f, width, center in candidates:
+        profile = dict(primary_mhz=f, width_mhz=width, center_mhz=center)
+        subchannels = range(center - width // 2 + 10, center + width // 2, 20)
+        if all(x in enabled for x in subchannels):
+            accepted.append(profile)
+        else:
+            skipped.append({**profile, 'reason': 'channel_disabled_or_not_reported_by_driver'})
+    return accepted, skipped
+
+
 def pcap_info(path):
     """Count saved records without interpreting optional Radiotap fields."""
     result = {'file': path.name, 'bytes': path.stat().st_size, 'packets': 0,
-              'truncated_packets': 0, 'incomplete_tail': False}
+              'truncated_packets': 0, 'incomplete_tail': False,
+              'radiotap_headers': 0, 'invalid_radiotap_records': 0}
     digest = hashlib.sha256()
     with path.open('rb') as src:
         for block in iter(lambda: src.read(1024 * 1024), b''):
@@ -173,9 +210,15 @@ def pcap_info(path):
                 if captured > result['bytes'] - src.tell():
                     result['incomplete_tail'] = True
                     break
-                src.seek(captured, 1)
+                # Radiotap's own length is 16-bit; do not allocate a huge record.
+                packet = src.read(min(captured, 65535))
+                src.seek(captured - len(packet), 1)
                 result['packets'] += 1
                 result['truncated_packets'] += captured < original
+                if result['linktype'] == 127 and radiotap_header_ok(packet):
+                    result['radiotap_headers'] += 1
+                else:
+                    result['invalid_radiotap_records'] += 1
     result['sha256'] = digest.hexdigest()
     return result
 
@@ -257,7 +300,8 @@ class Collector:
     def monitor(self, report):
         if not report['plan']:
             raise RuntimeError('No capture channels parsed; inspect phy_before.txt and iw_scan.txt. Capture was not started.')
-        iface = self.iface
+        radio = self.iface
+        iface = radio
         info = self.checked(['iw', 'dev', iface, 'info'])
         if not re.search(r'^\s*type managed\s*$', info, re.M):
             raise RuntimeError('Selected interface must start in managed mode')
@@ -276,12 +320,19 @@ class Collector:
         nm_restore = nm['rc'] == 0 and not nm['stdout'].strip().startswith('10 ')
         # Record intent before touching the interface, for recovery after power loss.
         report['original_interface'] = {'type': 'managed', 'up': up, 'nm_managed': nm_restore}
+        mon = f'axcap{os.getpid():x}'
+        if (Path('/sys/class/net') / mon).exists():
+            raise RuntimeError(f'Monitor interface name already exists: {mon}')
+        report['monitor_interface'] = mon
+        created = False
         self.save(report)
         try:
             if nm_restore:
                 self.checked(['nmcli', 'device', 'set', iface, 'managed', 'no'])
-            self.checked(['ip', 'link', 'set', 'dev', iface, 'down'])
-            self.checked(['iw', 'dev', iface, 'set', 'type', 'monitor'])
+            # Use a new netdev, with no inherited IPv4 address or old multicast sockets.
+            self.checked(['iw', 'phy', self.phy, 'interface', 'add', mon, 'type', 'monitor'])
+            created = True
+            iface = mon
             # Ask for control/other-BSS and erroneous frames. Log fallbacks explicitly.
             report['monitor_flags'] = None
             for flags in (['control', 'otherbss', 'fcsfail', 'plcpfail'], ['control', 'otherbss'], []):
@@ -290,6 +341,13 @@ class Collector:
                     report['monitor_flags'] = flags
                     break
             self.checked(['ip', 'link', 'set', 'dev', iface, 'up'])
+            # Bring the monitor up first to avoid stopping the radio between roles.
+            self.checked(['ip', 'link', 'set', 'dev', radio, 'down'])
+            for name, args in [('reg_monitor', ['iw', 'reg', 'get']),
+                               ('phy_monitor', ['iw', 'phy', self.phy, 'info']),
+                               ('ip_monitor', ['ip', '-details', 'addr', 'show', 'dev', iface])]:
+                r = self.command(args)
+                (self.session / (name + '.txt')).write_text(r['stdout'] + r['stderr'])
             self.command(['tcpdump', '-i', iface, '-L'])
             deadline = time.monotonic() + self.cfg['monitor_seconds']
             for i, setting in enumerate(report['plan']):
@@ -320,7 +378,8 @@ class Collector:
                 stem = f'{i:03d}_{f}MHz_{width}MHz'
                 filename = self.session / (stem + '.pcap')
                 cmd = ['tcpdump', '-i', iface, '-y', 'IEEE802_11_RADIO', '-s', '262144',
-                       '-B', '4096', '-U', '-n', '-Z', 'root', '-C', '32', '-w', str(filename)]
+                       '-Q', 'in', '--immediate-mode', '-B', '4096', '-U', '-n',
+                       '-Z', 'root', '-C', '32', '-w', str(filename)]
                 item['command'] = cmd
                 until = min(deadline, time.monotonic() + self.cfg['dwell_seconds'])
                 with (self.session / (stem + '.tcpdump.log')).open('wb') as log:
@@ -343,14 +402,15 @@ class Collector:
             # Ignore repeated stop signals while restoring the dedicated adapter.
             old = {s: signal.signal(s, signal.SIG_IGN) for s in (signal.SIGINT, signal.SIGTERM)}
             try:
-                restore = [self.command(['ip', 'link', 'set', 'dev', iface, 'down']),
-                           self.command(['iw', 'dev', iface, 'set', 'type', 'managed'])]
+                restore = []
                 if up:
-                    restore.append(self.command(['ip', 'link', 'set', 'dev', iface, 'up']))
+                    restore.append(self.command(['ip', 'link', 'set', 'dev', radio, 'up']))
+                if created:
+                    restore.append(self.command(['iw', 'dev', mon, 'del']))
                 if nm_restore:
-                    restore.append(self.command(['nmcli', 'device', 'set', iface, 'managed', 'yes']))
+                    restore.append(self.command(['nmcli', 'device', 'set', radio, 'managed', 'yes']))
                 report['restore_ok'] = all(r['rc'] == 0 for r in restore)
-                report['restored_interface'] = self.command(['iw', 'dev', iface, 'info'])
+                report['restored_interface'] = self.command(['iw', 'dev', radio, 'info'])
                 report['restore_ok'] = bool(report['restore_ok'] and
                     report['restored_interface']['rc'] == 0 and
                     re.search(r'^\s*type managed\s*$', report['restored_interface']['stdout'], re.M))
@@ -369,7 +429,7 @@ class Collector:
             raise RuntimeError('Insufficient free disk space; existing captures were retained')
         self.session = Path(tempfile.mkdtemp(prefix=dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ_'), dir=root))
         self.events = self.session / 'commands.jsonl'
-        report = {'version': '1.1', 'start_utc': utc(), 'hostname': socket.gethostname(),
+        report = {'version': '1.2', 'start_utc': utc(), 'hostname': socket.gethostname(),
                   'iface': self.iface, 'phy': self.phy, 'captures': [], 'attempted_profiles': 0,
                   'status': 'running', 'capture_requested': capture,
                   'settings': {k: str(v) if isinstance(v, Path) else v for k, v in self.cfg.items()}}
@@ -378,9 +438,19 @@ class Collector:
             self.diagnostics('before')
             report['legacy_scan'] = self.legacy_scan()
             scan = (self.session / 'iw_scan.txt').read_text(errors='replace')
-            phy = (self.session / 'phy_before.txt').read_text(errors='replace')
+            # Intel's enabled channels may change during a managed-mode scan.
+            r = self.command(['iw', 'phy', self.phy, 'info'])
+            phy = r['stdout'] if r['rc'] == 0 else ''
+            (self.session / 'phy_after_scan.txt').write_text(r['stdout'] + r['stderr'])
+            r = self.command(['iw', 'reg', 'get'])
+            (self.session / 'reg_after_scan.txt').write_text(r['stdout'] + r['stderr'])
+            report['six_ghz_enabled_after_scan'] = sorted(f for f in enabled_frequencies(phy) if f >= 5925)
             report['plan'], report['plan_source'] = discover_plan(
                 scan if report['legacy_scan'].get('stage') != 'iw_scan' else '', phy, self.cfg['plan'])
+            if self.cfg.get('probe'):
+                report['plan'], report['skipped_probe_profiles'] = probe_plan(phy)
+                report['plan_source'] = 'lab_probe_after_scan'
+            print(f"6 GHz enabled channels after scan: {len(report['six_ghz_enabled_after_scan'])}", flush=True)
             self.save(report)
             if capture:
                 print(f"Capture plan: {len(report['plan'])} receive profiles; monitor budget {self.cfg['monitor_seconds']} seconds", flush=True)
@@ -401,25 +471,31 @@ class Collector:
             # Include a capture interrupted before its per-profile record was completed.
             report['pcap_files'] = [pcap_info(p) for p in sorted(self.session.glob('*.pcap*'))]
             report['saved_packets'] = sum(f['packets'] for f in report['pcap_files'])
+            report['radiotap_headers'] = sum(f['radiotap_headers'] for f in report['pcap_files'])
+            report['invalid_radiotap_records'] = sum(f['invalid_radiotap_records'] for f in report['pcap_files'])
             report['sweep_complete'] = bool(report.get('plan')) and report['unvisited_profiles'] == 0
             if report['status'] == 'completed':
                 if not report.get('legacy_scan', {}).get('ok'):
                     report['status'] = 'scan_failed'
                 if capture and report['saved_packets'] == 0:
                     report['status'] = 'no_packets'
+                elif capture and report['invalid_radiotap_records']:
+                    report['status'] = 'invalid_capture_records'
+                elif capture and not report['sweep_complete']:
+                    report['status'] = 'partial'
                 if capture and report.get('restore_ok') is False:
                     report['status'] = 'restore_failed'
             self.save(report)
             (root / 'LATEST.txt').write_text(str(self.session) + '\n')
-            print(f"Capture folder: {self.session}\nStatus: {report['status']}; saved packets: {report['saved_packets']}", flush=True)
+            print(f"Capture folder: {self.session}\nStatus: {report['status']}; saved records: {report['saved_packets']}; Radiotap headers: {report['radiotap_headers']}; invalid records: {report['invalid_radiotap_records']}", flush=True)
         return bool(report['legacy_scan']['ok'] and
-                    (not capture or (report['saved_packets'] > 0 and report.get('restore_ok', False))))
+                    (not capture or (report['radiotap_headers'] > 0 and not report['invalid_radiotap_records'] and report.get('restore_ok', False))))
 
 
 def main(cfg, mode):
     os.umask(0o077)
-    if mode not in ('once', 'loop', 'scan-only', 'pack'):
-        raise ValueError('Usage: scan_wifi.sh [once|loop|scan-only|pack]')
+    if mode not in ('once', 'loop', 'scan-only', 'pack', 'probe'):
+        raise ValueError('Usage: scan_wifi.sh [once|loop|scan-only|pack|probe]')
     if os.geteuid() != 0:
         raise RuntimeError('Run with sudo/root, as required for scan and monitor operations')
     if mode == 'pack':
@@ -454,6 +530,8 @@ def main(cfg, mode):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RuntimeError('scanner-poller is already running; stop it before this diagnostic run')
+        if mode == 'probe':
+            cfg = {**cfg, 'probe': True, 'dwell_seconds': 20, 'monitor_seconds': 120}
         collector = Collector(cfg)
         while True:
             ok = collector.once(capture=mode != 'scan-only')
