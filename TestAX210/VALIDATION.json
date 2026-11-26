@@ -1,0 +1,12 @@
+{
+  "offline_tests_passed": 15,
+  "existing_echo_capture_decoder_smoke": {
+    "records": 65622,
+    "decoded": 65622,
+    "both_chain_rssi": 65622
+  },
+  "hardware_tx_power_sweep_tested": false,
+  "notes": "Existing capture only verifies decoding. No new measurements have been taken.",
+  "layout": "TestAX210",
+  "windows_execution_tested": false
+}

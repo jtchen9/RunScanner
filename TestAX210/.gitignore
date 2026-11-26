@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+/results/
+/input/*
+!/input/.gitkeep
+*.zip
+*.pcap*
